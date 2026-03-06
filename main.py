@@ -46,6 +46,7 @@ from modules.excel_parser import parse_excel
 from modules.image_searcher import get_reference_images
 from modules.folder_builder import build_product_folder, move_photos_to_product_folder, cleanup_temp_dir
 from modules.drive_uploader import upload_output_folder
+from modules.spec_generator import generate_product_specs
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
@@ -156,10 +157,11 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
             product_folder = build_product_folder(OUTPUT_DIR, excel_name, section, serial)
             product_temp = os.path.join(temp_session, f"img_{serial}")
 
-            # Search + download product images directly
-            photos = await asyncio.to_thread(
-                get_reference_images, brand, model, product_temp
-            )
+            # Search + download photos and generate specs concurrently
+            photos_task = asyncio.to_thread(get_reference_images, brand, model, product_temp)
+            specs_task = asyncio.to_thread(generate_product_specs, brand, model, product.get("category", ""))
+            
+            photos, ai_specs = await asyncio.gather(photos_task, specs_task)
 
             if photos:
                 move_photos_to_product_folder(photos, product_folder)
@@ -173,8 +175,11 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
                 )
                 if product.get("category"):
                     specs_text += f"الفئة: {product['category']}\n"
+                    
+                if ai_specs:
+                    specs_text += f"\n--- المواصفات الفنية ---\n{ai_specs}\n"
                 
-                # Save as UTF-8 so Arabic renders correctly on Windows/Mac/Web
+                # Save as UTF-8 so Arabic renders correctly
                 specs_path = os.path.join(product_folder, "مواصفات.txt")
                 with open(specs_path, "w", encoding="utf-8") as f:
                     f.write(specs_text)
