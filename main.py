@@ -9,7 +9,7 @@ Flow:
 1. User sends an Excel file (.xlsx) to the bot
 2. Bot downloads the file
 3. Parses all products/sections/serials from the Excel
-4. For each product: searches Google Images → downloads up to 3 high-quality photos
+4. For each product: searches images → downloads up to 3 high-quality photos
 5. Saves photos into: ExcelName / Section / SerialCode /
 6. Uploads entire folder to Dropbox (inside "Product Photos Bot" folder)
 7. Sends progress messages throughout + final Dropbox link at the end
@@ -20,6 +20,7 @@ import sys
 import uuid
 import logging
 import asyncio
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -50,20 +51,23 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 TEMP_DIR = os.path.join(os.path.dirname(__file__), "temp")
 
+# Estimated seconds per product (search + download + save)
+EST_SECONDS_PER_PRODUCT = 8
+
 
 # ─────────────────────────────────────────────
 # /start command
 # ─────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 *Welcome to the Product Photo Bot!*\n\n"
-        "Send me an Excel file (.xlsx) with your products list and I will:\n"
-        "📊 Parse all products\n"
-        "🔍 Search Google Images for each product\n"
-        "📂 Organise photos into folders by section & serial code\n"
-        "☁️ Upload everything to Dropbox\n"
-        "🔗 Send you the download link!\n\n"
-        "Just send the Excel file to get started!",
+        "👋 *أهلاً بيك في بوت صور المنتجات!*\n\n"
+        "ابعتلي ملف Excel (.xlsx) فيه المنتجات وأنا هـ:\n"
+        "📊 أقرأ كل المنتجات من الملف\n"
+        "🔍 أدور على صور لكل منتج\n"
+        "📂 أرتبهم في فولدرات\n"
+        "☁️ أرفعهم على Dropbox\n"
+        "🔗 أبعتلك اللينك!\n\n"
+        "ابعت الملف وأنا هبدأ 🚀",
         parse_mode="Markdown",
     )
 
@@ -79,17 +83,17 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filename = doc.file_name or "file"
     if not (filename.endswith(".xlsx") or filename.endswith(".xls")):
         await update.message.reply_text(
-            "⚠️ Please send an Excel file (.xlsx or .xls)."
+            "⚠️ ابعت ملف Excel (.xlsx أو .xls) بس."
         )
         return
 
     await update.message.reply_text(
-        f"📥 Received *{filename}*!\n"
-        "Starting to process your products... I'll keep you updated! ⏳",
+        f"📥 استلمت *{filename}*!\n"
+        "هبدأ أشتغل عليه دلوقتي... ⏳",
         parse_mode="Markdown",
     )
 
-    # Run the heavy pipeline in a background thread so the bot stays responsive
+    # Run the heavy pipeline in a background task
     asyncio.create_task(
         process_pipeline(context.bot, chat_id, doc, filename)
     )
@@ -122,15 +126,21 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
         products = parsed["products"]
 
         if not products:
-            await send("❌ No products found in the file. Please check the format.")
+            await send("❌ مفيش منتجات في الملف. راجع الفورمات وابعته تاني.")
             return
 
+        # Calculate estimated time
+        est_minutes = max(1, (len(products) * EST_SECONDS_PER_PRODUCT) // 60)
+        est_text = f"{est_minutes} دقيقة" if est_minutes < 60 else f"{est_minutes // 60} ساعة و {est_minutes % 60} دقيقة"
+
         await send(
-            f"📊 Found *{len(products)} products* in *{excel_name}*.\n"
-            f"Generating studio photos now... 🎨"
+            f"📊 لقيت *{len(products)} منتج* في *{excel_name}*\n"
+            f"⏱ الوقت المتوقع: *{est_text}* تقريباً\n\n"
+            f"هبدأ دلوقتي... 🔄"
         )
 
         failed = []
+        start_time = time.time()
 
         # ── Step 3: Process each product ──
         for idx, product in enumerate(products, start=1):
@@ -142,19 +152,11 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
 
             logger.info(f"[{idx}/{len(products)}] {serial}: {product_display}")
 
-            # Send progress every 5 products or for the first one
-            if idx == 1 or idx % 5 == 0:
-                await send(
-                    f"⚙️ `[{serial}]` {product_display[:45]}\n"
-                    f"→ Processing {idx}/{len(products)}"
-                )
-
             # Build product output folder
             product_folder = build_product_folder(OUTPUT_DIR, excel_name, section, serial)
             product_temp = os.path.join(temp_session, f"img_{serial}")
 
             # Search + download product images directly
-            await send(f"🔍 `[{serial}]` Searching for images...")
             photos = await asyncio.to_thread(
                 get_reference_images, brand, model, product_temp
             )
@@ -166,36 +168,50 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
                 logger.warning(f"⚠️ {serial} — No photos found")
                 failed.append(serial)
 
+            # Send progress update every 5 products
+            if idx % 5 == 0 and idx < len(products):
+                elapsed = time.time() - start_time
+                remaining = (elapsed / idx) * (len(products) - idx)
+                rem_min = max(1, int(remaining // 60))
+                await send(
+                    f"📦 خلصت *{idx}/{len(products)}* منتج...\n"
+                    f"⏱ فاضل تقريباً *{rem_min} دقيقة*"
+                )
+
         # ── Step 4: Upload to Dropbox ──
         success_count = len(products) - len(failed)
         excel_output_folder = os.path.join(OUTPUT_DIR, excel_name)
 
         if not os.path.exists(excel_output_folder) or success_count == 0:
             await send(
-                f"⚠️ *No photos were generated* for *{excel_name}*.\n"
-                f"This usually means the Gemini API key doesn't have access to Imagen.\n"
-                f"Check your GEMINI_API_KEY has Imagen access in Google AI Studio."
+                f"⚠️ *مقدرتش ألاقي صور* لـ *{excel_name}*\n"
+                f"ممكن يكون في مشكلة في أسماء المنتجات."
             )
             return
 
-        await send("☁️ Uploading all photos to Dropbox...")
+        await send("☁️ بارفع الصور على Dropbox...")
         dropbox_link = await asyncio.to_thread(upload_output_folder, excel_output_folder)
 
         # ── Step 5: Send final message ──
+        elapsed_total = time.time() - start_time
+        elapsed_min = int(elapsed_total // 60)
+        elapsed_sec = int(elapsed_total % 60)
+
         await send(
-            f"✅ *Done!* Processed *{success_count}* products from *{excel_name}*.\n\n"
-            f"📁 *Download your photos here:*\n{dropbox_link}"
+            f"✅ *تم!* اشتغلت على *{success_count}* منتج من *{excel_name}*\n"
+            f"⏱ الوقت: {elapsed_min} دقيقة و {elapsed_sec} ثانية\n\n"
+            f"📁 *حمّل الصور من هنا:*\n{dropbox_link}"
         )
 
         if failed:
             await send(
-                f"⚠️ {len(failed)} products had no photos generated:\n"
+                f"⚠️ {len(failed)} منتج ملقيتلهمش صور:\n"
                 + "\n".join(f"• {s}" for s in failed)
             )
 
     except Exception as e:
         logger.exception(f"Pipeline error: {e}")
-        await send(f"❌ *Error:* {str(e)[:300]}\n\nPlease check the file and try again.")
+        await send(f"❌ *حصل مشكلة:* {str(e)[:300]}\n\nراجع الملف وابعته تاني.")
 
     finally:
         cleanup_temp_dir(temp_session)
