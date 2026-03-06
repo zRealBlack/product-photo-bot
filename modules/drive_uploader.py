@@ -20,35 +20,22 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 def _get_drive_service():
     """
-    Builds Google Drive credentials from individual env vars (most reliable on Railway).
-    Falls back to a JSON file path if GDRIVE_PRIVATE_KEY is not set.
+    Authentication priority:
+    1. GDRIVE_SA_B64  — base64-encoded service_account.json (recommended for Railway)
+    2. GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON — path to a local .json file (local dev)
     """
     import json as _json
+    import base64 as _b64
 
-    private_key = os.getenv("GDRIVE_PRIVATE_KEY", "")
+    sa_b64 = os.getenv("GDRIVE_SA_B64", "")
 
-    if private_key:
-        # Individual env vars mode (Railway) — no JSON encoding issues
-        # Railway may strip leading/trailing whitespace or convert \\n → \n already
-        # Ensure the private key has real newlines (not literal \n string)
-        if "\\n" in private_key and "\n" not in private_key:
-            private_key = private_key.replace("\\n", "\n")
-
-        info = {
-            "type": "service_account",
-            "project_id": os.getenv("GDRIVE_PROJECT_ID", ""),
-            "private_key_id": os.getenv("GDRIVE_PRIVATE_KEY_ID", ""),
-            "private_key": private_key,
-            "client_email": os.getenv("GDRIVE_CLIENT_EMAIL", ""),
-            "client_id": os.getenv("GDRIVE_CLIENT_ID", ""),
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_x509_cert_url": os.getenv("GDRIVE_CLIENT_X509_CERT_URL", ""),
-        }
+    if sa_b64:
+        # Decode base64 → JSON string → dict (no newline or escape issues)
+        raw = _b64.b64decode(sa_b64.strip()).decode("utf-8")
+        info = _json.loads(raw)
         credentials = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     else:
-        # Fallback: JSON file path (local dev)
+        # Fallback: local JSON file
         sa_file = os.getenv("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", "service_account.json")
         credentials = service_account.Credentials.from_service_account_file(sa_file, scopes=SCOPES)
 
