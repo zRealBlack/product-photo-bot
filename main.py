@@ -189,15 +189,29 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
                 logger.warning(f"⚠️ {serial} — No photos found")
                 failed.append(serial)
 
-            # Send progress update every 5 products
-            if idx % 5 == 0 and idx < len(products):
-                elapsed = time.time() - start_time
-                remaining = (elapsed / idx) * (len(products) - idx)
-                rem_min = max(1, int(remaining // 60))
-                await send(
-                    f"📦 خلصت *{idx}/{len(products)}* منتج...\n"
-                    f"⏱ فاضل تقريباً *{rem_min} دقيقة*"
-                )
+            # Send progress update every 10%
+            percent_complete = int((idx / len(products)) * 100)
+            # Only trigger on exact 10% increments (10, 20, 30...) or if it's the very last product
+            if (percent_complete % 10 == 0 and percent_complete > 0) or idx == len(products):
+                # Ensure we only send one message per 10% block
+                # Using a dummy attribute on `context.chat_data` would be better, but we don't have context here.
+                # Since idx loop is synchronous, we can just track the last reported percentage natively:
+                if not hasattr(process_pipeline, "last_reported_percent"):
+                    process_pipeline.last_reported_percent = {}
+                
+                chat_progress = process_pipeline.last_reported_percent.get(chat_id, 0)
+                
+                if percent_complete > chat_progress:
+                    process_pipeline.last_reported_percent[chat_id] = percent_complete
+                    elapsed = time.time() - start_time
+                    remaining = (elapsed / idx) * (len(products) - idx)
+                    rem_min = max(1, int(remaining // 60))
+                    
+                    await send(
+                        f"🔄 **تقدم العمل:** {percent_complete}%\n"
+                        f"📦 خلصت *{idx}/{len(products)}* منتج...\n"
+                        f"⏱ الوقت المتبقي تقريباً: *{rem_min} دقيقة*"
+                    )
 
         # ── Step 4: Upload to Dropbox ──
         success_count = len(products) - len(failed)

@@ -27,19 +27,19 @@ def generate_product_specs(brand: str, model: str, category: str = "") -> str:
         product_name += f" ({category})"
 
     prompt = (
-        f"اكتب مواصفات فنية ومميزات للمنتج التالي: {product_name}\n\n"
-        "الشروط:\n"
-        "1. يجب أن تكون باللغة العربية الواضحة والمفهومة.\n"
-        "2. اكتب المواصفات في شكل نقاط (Bullets) منظمة وقصيرة.\n"
-        "3. لا تكتب أي مقدمات أو خاتمات، فقط المواصفات مباشرة.\n"
-        "4. لا تستخدم أكواد برمجية في الإجابة."
+        f"Write comprehensive and detailed technical specifications and features for the following product: {product_name}\n\n"
+        "Requirements:\n"
+        "1. Write in clear, professional English.\n"
+        "2. Provide a detailed bulleted list of key features and technical specs.\n"
+        "3. Do not include any introductions or conclusions, just the specifications directly.\n"
+        "4. Do not use Markdown asterisks (**), just plain text bullets (-)."
     )
 
     data = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": 300,
+            "maxOutputTokens": 600,
         }
     }
 
