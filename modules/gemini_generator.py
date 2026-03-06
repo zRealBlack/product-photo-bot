@@ -42,30 +42,44 @@ def generate_studio_photos(
 
     prompt = STUDIO_PROMPT.format(product_name=product_name)
 
+    # Try models in order of preference
+    MODELS = ["imagen-3.0-generate-002", "imagen-3.0-fast-generate-001"]
+
     for i in range(num_photos):
-        try:
-            result = client.models.generate_images(
-                model="imagen-3.0-generate-002",
-                prompt=prompt,
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,
-                    aspect_ratio="1:1",
-                    safety_filter_level="BLOCK_FEW",
-                    person_generation="DONT_ALLOW",
-                ),
-            )
+        generated = False
+        for model_name in MODELS:
+            try:
+                result = client.models.generate_images(
+                    model=model_name,
+                    prompt=prompt,
+                    config=types.GenerateImagesConfig(
+                        number_of_images=1,
+                        aspect_ratio="1:1",
+                        safety_filter_level="BLOCK_FEW",
+                        person_generation="DONT_ALLOW",
+                    ),
+                )
 
-            if result.generated_images:
-                img_data = result.generated_images[0].image.image_bytes
-                file_path = os.path.join(output_dir, f"photo_{i + 1}.jpg")
-                img = Image.open(io.BytesIO(img_data)).convert("RGB")
-                img.save(file_path, "JPEG", quality=95)
-                saved_paths.append(file_path)
-                logger.info(f"Generated photo {i + 1}: {file_path}")
-            else:
-                logger.warning(f"No image returned for photo {i + 1} of {product_name}")
+                if result.generated_images:
+                    img_data = result.generated_images[0].image.image_bytes
+                    file_path = os.path.join(output_dir, f"photo_{i + 1}.jpg")
+                    img = Image.open(io.BytesIO(img_data)).convert("RGB")
+                    img.save(file_path, "JPEG", quality=95)
+                    saved_paths.append(file_path)
+                    logger.info(f"Generated photo {i + 1} using {model_name}: {file_path}")
+                    generated = True
+                    break  # success, move to next photo
 
-        except Exception as e:
-            logger.error(f"Gemini generation failed for {product_name} photo {i + 1}: {e}")
+            except Exception as e:
+                err_str = str(e)
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    logger.warning(f"Model {model_name} not available, trying next...")
+                    continue  # try next model
+                else:
+                    logger.error(f"Gemini error for {product_name} photo {i + 1}: {e}")
+                    break  # non-404 error, stop retrying
+
+        if not generated:
+            logger.warning(f"No image generated for {product_name} photo {i + 1} (all models failed)")
 
     return saved_paths

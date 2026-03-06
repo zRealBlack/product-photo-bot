@@ -44,7 +44,8 @@ def parse_excel(file_path: str) -> dict:
     }
     """
     wb = openpyxl.load_workbook(file_path, data_only=True)
-    excel_name = file_path.split("\\")[-1].replace(".xlsx", "").replace(".xls", "")
+    import os as _os
+    excel_name = _os.path.splitext(_os.path.basename(file_path))[0]
     products = []
 
     for sheet_name in wb.sheetnames:

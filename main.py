@@ -11,8 +11,8 @@ Flow:
 3. Parses all products/sections/serials from the Excel
 4. For each product: searches Google Images → generates 3 Gemini studio photos
 5. Builds local folder tree: ExcelName / Section / SerialCode / photos
-6. Uploads entire folder to Google Drive (inside "Product Photos Bot" folder)
-7. Sends progress messages throughout + final Drive link at the end
+6. Uploads entire folder to Dropbox (inside "Product Photos Bot" folder)
+7. Sends progress messages throughout + final Dropbox link at the end
 """
 
 import os
@@ -62,7 +62,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 Parse all products\n"
         "🔍 Search for reference images\n"
         "🎨 Generate 3 white-studio photos per product using Gemini\n"
-        "☁️ Upload everything to Google Drive\n"
+        "☁️ Upload everything to Dropbox\n"
         "🔗 Send you the download link!\n\n"
         "Just send the Excel file to get started!",
         parse_mode="Markdown",
@@ -177,21 +177,30 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
                 logger.warning(f"⚠️ {serial} — No photos generated")
                 failed.append(serial)
 
-        # ── Step 4: Upload to Google Drive ──
-        await send("☁️ Uploading all photos to Google Drive...")
+        # ── Step 4: Upload to Dropbox ──
+        success_count = len(products) - len(failed)
         excel_output_folder = os.path.join(OUTPUT_DIR, excel_name)
-        drive_link = await asyncio.to_thread(upload_output_folder, excel_output_folder)
+
+        if not os.path.exists(excel_output_folder) or success_count == 0:
+            await send(
+                f"⚠️ *No photos were generated* for *{excel_name}*.\n"
+                f"This usually means the Gemini API key doesn't have access to Imagen.\n"
+                f"Check your GEMINI_API_KEY has Imagen access in Google AI Studio."
+            )
+            return
+
+        await send("☁️ Uploading all photos to Dropbox...")
+        dropbox_link = await asyncio.to_thread(upload_output_folder, excel_output_folder)
 
         # ── Step 5: Send final message ──
-        success_count = len(products) - len(failed)
         await send(
             f"✅ *Done!* Processed *{success_count}* products from *{excel_name}*.\n\n"
-            f"📁 *Download your photos here:*\n{drive_link}"
+            f"📁 *Download your photos here:*\n{dropbox_link}"
         )
 
         if failed:
             await send(
-                f"⚠️ {len(failed)} products had issues and were skipped:\n"
+                f"⚠️ {len(failed)} products had no photos generated:\n"
                 + "\n".join(f"• {s}" for s in failed)
             )
 
