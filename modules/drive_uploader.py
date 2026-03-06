@@ -20,37 +20,37 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 def _get_drive_service():
     """
-    Supports two modes:
-    - Local dev:  GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON = path to .json file
-    - Railway:    GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON = raw JSON string
-
-    Railway sometimes converts \\n in private keys to actual newlines.
-    We handle both cases gracefully.
+    Builds Google Drive credentials from individual env vars (most reliable on Railway).
+    Falls back to a JSON file path if GDRIVE_PRIVATE_KEY is not set.
     """
     import json as _json
 
-    sa_env = os.getenv("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", "service_account.json")
+    private_key = os.getenv("GDRIVE_PRIVATE_KEY", "")
 
-    # If it starts with '{', treat it as a raw JSON string (Railway mode)
-    if sa_env.strip().startswith("{"):
-        try:
-            # First attempt: parse as-is
-            info = _json.loads(sa_env)
-        except _json.JSONDecodeError:
-            # Railway may have converted \n escapes → actual newlines inside string values.
-            # Fix: replace actual newlines with \n escape sequences so JSON is valid again.
-            sa_fixed = sa_env.replace('\r\n', '\n')  # normalize line endings first
-            # Only escape newlines that are INSIDE string values (not structural whitespace).
-            # Strategy: re-escape all actual newlines → the private key will have proper \n.
-            sa_fixed = sa_fixed.replace('\n', '\\n')
-            try:
-                info = _json.loads(sa_fixed)
-            except _json.JSONDecodeError as e2:
-                logger.error(f"Failed to parse service account JSON even after fixing newlines: {e2}")
-                raise
+    if private_key:
+        # Individual env vars mode (Railway) — no JSON encoding issues
+        # Railway may strip leading/trailing whitespace or convert \\n → \n already
+        # Ensure the private key has real newlines (not literal \n string)
+        if "\\n" in private_key and "\n" not in private_key:
+            private_key = private_key.replace("\\n", "\n")
+
+        info = {
+            "type": "service_account",
+            "project_id": os.getenv("GDRIVE_PROJECT_ID", ""),
+            "private_key_id": os.getenv("GDRIVE_PRIVATE_KEY_ID", ""),
+            "private_key": private_key,
+            "client_email": os.getenv("GDRIVE_CLIENT_EMAIL", ""),
+            "client_id": os.getenv("GDRIVE_CLIENT_ID", ""),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": os.getenv("GDRIVE_CLIENT_X509_CERT_URL", ""),
+        }
         credentials = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     else:
-        credentials = service_account.Credentials.from_service_account_file(sa_env, scopes=SCOPES)
+        # Fallback: JSON file path (local dev)
+        sa_file = os.getenv("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", "service_account.json")
+        credentials = service_account.Credentials.from_service_account_file(sa_file, scopes=SCOPES)
 
     return build("drive", "v3", credentials=credentials)
 
