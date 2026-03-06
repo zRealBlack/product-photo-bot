@@ -5,16 +5,16 @@ Uses Google Gemini (Imagen 3) to generate professional white-studio product phot
 
 import os
 import logging
-import base64
-from pathlib import Path
-import google.generativeai as genai
-from PIL import Image
 import io
+from pathlib import Path
+from google import genai
+from google.genai import types
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 STUDIO_PROMPT = (
@@ -42,52 +42,22 @@ def generate_studio_photos(
 
     prompt = STUDIO_PROMPT.format(product_name=product_name)
 
-    # Use Imagen 3 for generation
-    try:
-        imagen_model = genai.ImageGenerationModel("imagen-3.0-generate-002")
-    except Exception:
-        logger.warning("Imagen 3 model not available, falling back to imagen-3.0-fast-generate-001")
-        imagen_model = genai.ImageGenerationModel("imagen-3.0-fast-generate-001")
-
-    # Build the prompt — include reference image context if available
-    full_prompt = prompt
-    if reference_image_paths:
-        full_prompt = (
-            f"Using the provided reference photo as a style guide for the product appearance, "
-            f"{prompt}"
-        )
-
-    # Prepare reference image for context (use first reference only)
-    reference_part = None
-    if reference_image_paths:
-        try:
-            with open(reference_image_paths[0], "rb") as f:
-                img_bytes = f.read()
-            reference_part = {
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(img_bytes).decode("utf-8"),
-                }
-            }
-        except Exception as e:
-            logger.warning(f"Could not load reference image: {e}")
-
     for i in range(num_photos):
         try:
-            # Generate with Imagen
-            result = imagen_model.generate_images(
-                prompt=full_prompt,
-                number_of_images=1,
-                aspect_ratio="1:1",
-                safety_filter_level="block_few",
-                person_generation="dont_allow",
+            result = client.models.generate_images(
+                model="imagen-3.0-generate-002",
+                prompt=prompt,
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    aspect_ratio="1:1",
+                    safety_filter_level="BLOCK_FEW",
+                    person_generation="DONT_ALLOW",
+                ),
             )
 
-            if result.images:
-                img_data = result.images[0]._image_bytes
+            if result.generated_images:
+                img_data = result.generated_images[0].image.image_bytes
                 file_path = os.path.join(output_dir, f"photo_{i + 1}.jpg")
-
-                # Convert to RGB JPEG and save
                 img = Image.open(io.BytesIO(img_data)).convert("RGB")
                 img.save(file_path, "JPEG", quality=95)
                 saved_paths.append(file_path)
