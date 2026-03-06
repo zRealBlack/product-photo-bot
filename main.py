@@ -163,7 +163,23 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
 
             if photos:
                 move_photos_to_product_folder(photos, product_folder)
-                logger.info(f"✅ {serial} — {len(photos)} photos saved")
+                
+                # Create the specs text file
+                specs_text = (
+                    f"كود الصنف: {serial}\n"
+                    f"الماركة: {brand}\n"
+                    f"الموديل: {model}\n"
+                    f"القسم: {section}\n"
+                )
+                if product.get("category"):
+                    specs_text += f"الفئة: {product['category']}\n"
+                
+                # Save as UTF-8 so Arabic renders correctly on Windows/Mac/Web
+                specs_path = os.path.join(product_folder, "مواصفات.txt")
+                with open(specs_path, "w", encoding="utf-8") as f:
+                    f.write(specs_text)
+                
+                logger.info(f"✅ {serial} — {len(photos)} photos saved & specs created")
             else:
                 logger.warning(f"⚠️ {serial} — No photos found")
                 failed.append(serial)
