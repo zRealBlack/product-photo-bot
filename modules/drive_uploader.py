@@ -23,6 +23,9 @@ def _get_drive_service():
     Supports two modes:
     - Local dev:  GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON = path to .json file
     - Railway:    GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON = raw JSON string
+
+    Railway sometimes converts \\n in private keys to actual newlines.
+    We handle both cases gracefully.
     """
     import json as _json
 
@@ -30,7 +33,21 @@ def _get_drive_service():
 
     # If it starts with '{', treat it as a raw JSON string (Railway mode)
     if sa_env.strip().startswith("{"):
-        info = _json.loads(sa_env)
+        try:
+            # First attempt: parse as-is
+            info = _json.loads(sa_env)
+        except _json.JSONDecodeError:
+            # Railway may have converted \n escapes → actual newlines inside string values.
+            # Fix: replace actual newlines with \n escape sequences so JSON is valid again.
+            sa_fixed = sa_env.replace('\r\n', '\n')  # normalize line endings first
+            # Only escape newlines that are INSIDE string values (not structural whitespace).
+            # Strategy: re-escape all actual newlines → the private key will have proper \n.
+            sa_fixed = sa_fixed.replace('\n', '\\n')
+            try:
+                info = _json.loads(sa_fixed)
+            except _json.JSONDecodeError as e2:
+                logger.error(f"Failed to parse service account JSON even after fixing newlines: {e2}")
+                raise
         credentials = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     else:
         credentials = service_account.Credentials.from_service_account_file(sa_env, scopes=SCOPES)
