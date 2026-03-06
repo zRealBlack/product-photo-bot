@@ -9,8 +9,8 @@ Flow:
 1. User sends an Excel file (.xlsx) to the bot
 2. Bot downloads the file
 3. Parses all products/sections/serials from the Excel
-4. For each product: searches Google Images → generates 3 Gemini studio photos
-5. Builds local folder tree: ExcelName / Section / SerialCode / photos
+4. For each product: searches Google Images → downloads up to 3 high-quality photos
+5. Saves photos into: ExcelName / Section / SerialCode /
 6. Uploads entire folder to Dropbox (inside "Product Photos Bot" folder)
 7. Sends progress messages throughout + final Dropbox link at the end
 """
@@ -43,7 +43,6 @@ logger = logging.getLogger(__name__)
 
 from modules.excel_parser import parse_excel
 from modules.image_searcher import get_reference_images
-from modules.gemini_generator import generate_studio_photos
 from modules.folder_builder import build_product_folder, move_photos_to_product_folder, cleanup_temp_dir
 from modules.drive_uploader import upload_output_folder
 
@@ -60,8 +59,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 *Welcome to the Product Photo Bot!*\n\n"
         "Send me an Excel file (.xlsx) with your products list and I will:\n"
         "📊 Parse all products\n"
-        "🔍 Search for reference images\n"
-        "🎨 Generate 3 white-studio photos per product using Gemini\n"
+        "🔍 Search Google Images for each product\n"
+        "📂 Organise photos into folders by section & serial code\n"
         "☁️ Upload everything to Dropbox\n"
         "🔗 Send you the download link!\n\n"
         "Just send the Excel file to get started!",
@@ -152,29 +151,19 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
 
             # Build product output folder
             product_folder = build_product_folder(OUTPUT_DIR, excel_name, section, serial)
-            product_temp = os.path.join(temp_session, f"ref_{serial}")
+            product_temp = os.path.join(temp_session, f"img_{serial}")
 
-            # Search reference images
-            await send(f"🔍 `[{serial}]` Searching for reference images...")
-            ref_images = await asyncio.to_thread(
-                get_reference_images, brand, model, product_temp
-            )
-
-            # Generate studio photos
-            await send(f"🎨 `[{serial}]` Generating studio photos...")
+            # Search + download product images directly
+            await send(f"🔍 `[{serial}]` Searching for images...")
             photos = await asyncio.to_thread(
-                generate_studio_photos,
-                product_display,
-                ref_images,
-                product_temp,
-                3,
+                get_reference_images, brand, model, product_temp
             )
 
             if photos:
                 move_photos_to_product_folder(photos, product_folder)
                 logger.info(f"✅ {serial} — {len(photos)} photos saved")
             else:
-                logger.warning(f"⚠️ {serial} — No photos generated")
+                logger.warning(f"⚠️ {serial} — No photos found")
                 failed.append(serial)
 
         # ── Step 4: Upload to Dropbox ──

@@ -1,22 +1,30 @@
 """
 image_searcher.py
-Searches Google Custom Search for product reference images and downloads them.
+Searches Google Custom Search for product images and downloads them.
+Saves high-quality JPG/PNG files directly to the product folder — no AI needed.
 """
 
 import os
 import requests
 import logging
 from pathlib import Path
+from PIL import Image
+import io
 
 logger = logging.getLogger(__name__)
 
 GOOGLE_SEARCH_API_KEY = os.getenv("GOOGLE_SEARCH_API_KEY")
 GOOGLE_SEARCH_CX = os.getenv("GOOGLE_SEARCH_CX")
 
+# Minimum dimensions to accept an image (filter out tiny thumbnails)
+MIN_WIDTH = 400
+MIN_HEIGHT = 400
 
-def search_product_images(query: str, num_images: int = 3) -> list[str]:
+
+def search_product_images(query: str, num_images: int = 5) -> list[str]:
     """
-    Search Google Images for the product and return a list of image URLs.
+    Search Google Images for the product and return image URLs.
+    Requests large images to maximize quality.
     """
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
@@ -26,6 +34,7 @@ def search_product_images(query: str, num_images: int = 3) -> list[str]:
         "searchType": "image",
         "num": num_images,
         "imgType": "photo",
+        "imgSize": "large",      # prefer large images
         "safe": "active",
     }
 
@@ -40,50 +49,61 @@ def search_product_images(query: str, num_images: int = 3) -> list[str]:
         return []
 
 
-def download_images(image_urls: list[str], save_dir: str) -> list[str]:
+def download_images(image_urls: list[str], save_dir: str, max_photos: int = 3) -> list[str]:
     """
-    Download images from URLs to save_dir.
-    Returns list of local file paths for successfully downloaded images.
+    Download and validate images. Saves as JPEG (high quality).
+    Skips images that are too small or fail to open.
+    Returns list of saved file paths.
     """
     Path(save_dir).mkdir(parents=True, exist_ok=True)
     saved_paths = []
+    photo_num = 1
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
 
-    for i, url in enumerate(image_urls):
+    for url in image_urls:
+        if photo_num > max_photos:
+            break
         try:
-            response = requests.get(url, timeout=15, headers=headers)
-            response.raise_for_status()
+            resp = requests.get(url, timeout=20, headers=headers)
+            resp.raise_for_status()
 
-            # Determine extension from content type
-            content_type = response.headers.get("content-type", "image/jpeg")
-            ext = "jpg" if "jpeg" in content_type else content_type.split("/")[-1].split(";")[0]
-            ext = ext if ext in ("jpg", "jpeg", "png", "webp") else "jpg"
+            # Open with Pillow to validate and get dimensions
+            img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+            w, h = img.size
 
-            file_path = os.path.join(save_dir, f"ref_{i + 1}.{ext}")
-            with open(file_path, "wb") as f:
-                f.write(response.content)
+            if w < MIN_WIDTH or h < MIN_HEIGHT:
+                logger.info(f"Skipped small image ({w}x{h}): {url}")
+                continue
+
+            # Save as high-quality JPEG
+            file_path = os.path.join(save_dir, f"photo_{photo_num}.jpg")
+            img.save(file_path, "JPEG", quality=95, optimize=True)
             saved_paths.append(file_path)
-            logger.info(f"Downloaded reference image: {file_path}")
+            logger.info(f"Saved photo_{photo_num}.jpg ({w}x{h}): {url}")
+            photo_num += 1
+
         except Exception as e:
-            logger.warning(f"Failed to download image from {url}: {e}")
+            logger.warning(f"Skipped image from {url}: {e}")
 
     return saved_paths
 
 
 def get_reference_images(brand: str, model_name: str, save_dir: str) -> list[str]:
     """
-    Full pipeline: search + download reference images for a product.
+    Search for product images and download up to 3 high-quality ones.
     Returns list of local file paths.
     """
     query = f"{brand} {model_name}"
     logger.info(f"Searching images for: {query}")
-    urls = search_product_images(query, num_images=3)
+
+    # Search for 6 candidates so we have extras in case some are too small
+    urls = search_product_images(query, num_images=6)
 
     if not urls:
         logger.warning(f"No images found for: {query}")
         return []
 
-    return download_images(urls, save_dir)
+    return download_images(urls, save_dir, max_photos=3)
