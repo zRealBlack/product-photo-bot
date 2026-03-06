@@ -1,0 +1,30 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Environment variables (NEVER commit your real .env)
+.env
+
+# Google service account key (NEVER commit this)
+service_account.json
+
+# Output and temp folders (generated at runtime)
+output/
+temp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
