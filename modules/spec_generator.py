@@ -46,6 +46,9 @@ def generate_product_specs(brand: str, model: str, category: str = "") -> str:
     try:
         resp = requests.post(url, json=data, timeout=20)
         resp.raise_for_status()
+        
+        # Force UTF-8 encoding to prevent Windows charmap errors
+        resp.encoding = 'utf-8'
         result = resp.json()
         
         # Extract text from the Gemini response structure
@@ -54,7 +57,10 @@ def generate_product_specs(brand: str, model: str, category: str = "") -> str:
             content = candidates[0].get("content", {})
             parts = content.get("parts", [])
             if parts:
-                return parts[0].get("text", "").strip()
+                text = parts[0].get("text", "").strip()
+                # Clean up any potential markdown formatting the user doesn't want
+                text = text.replace("**", "")  # Remove bold markdown
+                return text
                 
         logger.warning(f"Failed to parse Gemini response for {product_name}")
         return ""
