@@ -173,7 +173,7 @@ class CatalogPDF(FPDF):
         
         self.set_y(y_start + (22 if is_main else 16))
 
-    def add_product_card(self, serial: str, product_name: str,
+    def add_product_card(self, serial: str, clean_name: str,
                          specs: str, colors: str, photo_path: str = ""):
         """Add a product card. Automatically handles page breaks."""
         card_height = 80  # increased slightly to fit more specs/colors
@@ -231,7 +231,7 @@ class CatalogPDF(FPDF):
         self.set_xy(text_x, y_start + 13)
         self.set_font(self.default_font, "B", 13)
         self.set_text_color(*COLOR_PRIMARY)
-        self.multi_cell(text_w, 7, product_name, new_x="LEFT", new_y="NEXT")
+        self.multi_cell(text_w, 7, clean_name, new_x="LEFT", new_y="NEXT")
 
         # No static Specs header, draw specs directly
         spec_y = self.get_y() + 2
@@ -315,7 +315,7 @@ def build_catalog_pdf(
             for product in sec_products:
                 pdf.add_product_card(
                     serial=product.get("serial_code", "N/A"),
-                    product_name=product.get("product_name", "Unknown Product"),
+                    clean_name=product.get("clean_name", "Unknown Product"),
                     specs=product.get("specs", ""),
                     colors=product.get("colors", ""),
                     photo_path=product.get("photo_path") or "",
