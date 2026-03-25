@@ -42,21 +42,31 @@ class CatalogPDF(FPDF):
         self._setup_fonts()
 
     def _setup_fonts(self):
-        """Register a Unicode-capable font for Latin + Arabic text."""
+        """Register Unicode-capable fonts for Latin + Arabic text with fallbacks."""
         font_dir = os.path.join(ASSETS_DIR, "fonts")
         
-        # Ensure we use NotoSansArabic which actually contains the Arabic glyphs 
-        # (the plain NotoSans drops them entirely in fpdf2)
-        noto_path = os.path.join(font_dir, "NotoSansArabic-Regular.ttf")
-        noto_bold_path = os.path.join(font_dir, "NotoSansArabic-Bold.ttf")
+        noto_ar_path = os.path.join(font_dir, "NotoSansArabic-Regular.ttf")
+        noto_ar_bold = os.path.join(font_dir, "NotoSansArabic-Bold.ttf")
+        
+        noto_en_path = os.path.join(font_dir, "NotoSans-Regular.ttf")
+        noto_en_bold = os.path.join(font_dir, "NotoSans-Bold.ttf")
 
-        if os.path.exists(noto_path):
-            self.add_font("Noto", "", fname=noto_path)
-            if os.path.exists(noto_bold_path):
-                self.add_font("Noto", "B", fname=noto_bold_path)
-            else:
-                self.add_font("Noto", "B", fname=noto_path)
-            self.default_font = "Noto"
+        # Load Arabic fonts
+        if os.path.exists(noto_ar_path):
+            self.add_font("NotoArabic", "", fname=noto_ar_path)
+            self.add_font("NotoArabic", "B", fname=noto_ar_bold if os.path.exists(noto_ar_bold) else noto_ar_path)
+            self.default_font = "NotoArabic"
+            
+            # Load English fallback fonts
+            if os.path.exists(noto_en_path):
+                self.add_font("Noto", "", fname=noto_en_path)
+                self.add_font("Noto", "B", fname=noto_en_bold if os.path.exists(noto_en_bold) else noto_en_path)
+                
+                # FPDF2 will automatically use Noto for any characters missing in NotoArabic (like English letters)
+                try:
+                    self.set_fallback_fonts(["Noto"])
+                except Exception as e:
+                    logger.warning(f"Could not set font fallbacks: {e}")
         else:
             logger.warning(f"Arabic font not found at {noto_path}. Text will drop if Arabic.")
             
