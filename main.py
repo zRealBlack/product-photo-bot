@@ -5,14 +5,15 @@ Telegram Bot — entry point for the Product Photo Bot.
 Uses python-telegram-bot v20+ in polling mode.
 Simply run: python main.py
 
+Commands:
+  /start   — Show welcome message with available commands
+  /photos  — Set mode to Photo Pipeline (search images → folders → Dropbox)
+  /catalog — Set mode to Catalog PDF (search images → specs → branded PDF)
+
 Flow:
-1. User sends an Excel file (.xlsx) to the bot
-2. Bot downloads the file
-3. Parses all products/sections/serials from the Excel
-4. For each product: searches images → downloads up to 3 high-quality photos
-5. Saves photos into: ExcelName / Section / SerialCode /
-6. Uploads entire folder to Dropbox (inside "Product Photos Bot" folder)
-7. Sends progress messages throughout + final Dropbox link at the end
+  1. User picks a command (/photos or /catalog)
+  2. User sends an Excel file (.xlsx)
+  3. Bot processes based on active mode
 """
 
 import os
@@ -47,6 +48,7 @@ from modules.image_searcher import get_reference_images
 from modules.folder_builder import build_product_folder, move_photos_to_product_folder, cleanup_temp_dir
 from modules.drive_uploader import upload_output_folder
 from modules.spec_generator import generate_product_specs
+from modules.catalog_builder import build_catalog_pdf
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
@@ -54,6 +56,7 @@ TEMP_DIR = os.path.join(os.path.dirname(__file__), "temp")
 
 # Estimated seconds per product (search + download + save)
 EST_SECONDS_PER_PRODUCT = 8
+EST_SECONDS_PER_PRODUCT_CATALOG = 15  # catalog also generates specs
 
 
 # ─────────────────────────────────────────────
@@ -62,13 +65,47 @@ EST_SECONDS_PER_PRODUCT = 8
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 *أهلاً بيك في بوت صور المنتجات!*\n\n"
-        "ابعتلي ملف Excel (.xlsx) فيه المنتجات وأنا هـ:\n"
-        "📊 أقرأ كل المنتجات من الملف\n"
+        "اختار الأمر اللي عايزه وبعدين ابعت ملف Excel:\n\n"
+        "📸 /photos — *تحميل صور المنتجات*\n"
+        "   بيدور على صور لكل منتج، ينظمهم في فولدرات، ويرفعهم على Dropbox\n\n"
+        "📄 /catalog — *كتالوج PDF*\n"
+        "   بيعمل كتالوج PDF بتصميم احترافي فيه صور المنتجات والمواصفات مع لوجو ashtry.com\n\n"
+        "اختار أمر وابعت الملف! 🚀",
+        parse_mode="Markdown",
+    )
+
+
+# ─────────────────────────────────────────────
+# /photos command — set mode
+# ─────────────────────────────────────────────
+async def photos_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "photos"
+    await update.message.reply_text(
+        "📸 *وضع الصور — Photos Mode*\n\n"
+        "ابعتلي ملف Excel (.xlsx) وأنا هـ:\n"
         "🔍 أدور على صور لكل منتج\n"
         "📂 أرتبهم في فولدرات\n"
         "☁️ أرفعهم على Dropbox\n"
         "🔗 أبعتلك اللينك!\n\n"
-        "ابعت الملف وأنا هبدأ 🚀",
+        "ابعت الملف دلوقتي 👇",
+        parse_mode="Markdown",
+    )
+
+
+# ─────────────────────────────────────────────
+# /catalog command — set mode
+# ─────────────────────────────────────────────
+async def catalog_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "catalog"
+    await update.message.reply_text(
+        "📄 *وضع الكتالوج — Catalog Mode*\n\n"
+        "ابعتلي ملف Excel (.xlsx) وأنا هـ:\n"
+        "🔍 أدور على صور لكل منتج\n"
+        "📝 أكتب مواصفات لكل منتج بالذكاء الاصطناعي\n"
+        "📄 أعمل كتالوج PDF بتصميم احترافي مع لوجو ashtry.com\n"
+        "☁️ أرفع الـ PDF على Dropbox\n"
+        "📎 أبعتلك الـ PDF هنا!\n\n"
+        "ابعت الملف دلوقتي 👇",
         parse_mode="Markdown",
     )
 
@@ -88,22 +125,44 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Check which mode is active
+    mode = context.user_data.get("mode", None)
+
+    if mode is None:
+        await update.message.reply_text(
+            "⚠️ *اختار mode الأول!*\n\n"
+            "📸 /photos — صور المنتجات + Dropbox\n"
+            "📄 /catalog — كتالوج PDF احترافي\n\n"
+            "اختار أمر وبعدين ابعت الملف تاني.",
+            parse_mode="Markdown",
+        )
+        return
+
     await update.message.reply_text(
         f"📥 استلمت *{filename}*!\n"
+        f"الوضع: *{'📸 صور' if mode == 'photos' else '📄 كتالوج'}*\n"
         "هبدأ أشتغل عليه دلوقتي... ⏳",
         parse_mode="Markdown",
     )
 
+    # Clear mode after use so user must pick again for next file
+    context.user_data["mode"] = None
+
     # Run the heavy pipeline in a background task
-    asyncio.create_task(
-        process_pipeline(context.bot, chat_id, doc, filename)
-    )
+    if mode == "photos":
+        asyncio.create_task(
+            photos_pipeline(context.bot, chat_id, doc, filename)
+        )
+    elif mode == "catalog":
+        asyncio.create_task(
+            catalog_pipeline(context.bot, chat_id, doc, filename)
+        )
 
 
 # ─────────────────────────────────────────────
-# Full processing pipeline (async)
+# Photos pipeline (existing logic)
 # ─────────────────────────────────────────────
-async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
+async def photos_pipeline(bot: Bot, chat_id: int, doc, filename: str):
     temp_session = os.path.join(TEMP_DIR, uuid.uuid4().hex)
     Path(temp_session).mkdir(parents=True, exist_ok=True)
     excel_path = os.path.join(temp_session, filename)
@@ -142,6 +201,7 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
 
         failed = []
         start_time = time.time()
+        last_reported_percent = 0
 
         # ── Step 3: Process each product ──
         for idx, product in enumerate(products, start=1):
@@ -160,12 +220,12 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
             # Search + download photos and generate specs concurrently
             photos_task = asyncio.to_thread(get_reference_images, brand, model, product_temp)
             specs_task = asyncio.to_thread(generate_product_specs, brand, model, product.get("category", ""))
-            
+
             photos, ai_specs = await asyncio.gather(photos_task, specs_task)
 
             if photos:
                 move_photos_to_product_folder(photos, product_folder)
-                
+
                 # Create the specs text file
                 specs_text = (
                     f"كود الصنف: {serial}\n"
@@ -175,15 +235,15 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
                 )
                 if product.get("category"):
                     specs_text += f"الفئة: {product['category']}\n"
-                    
+
                 if ai_specs:
                     specs_text += f"\n--- المواصفات الفنية ---\n{ai_specs}\n"
-                
+
                 # Save as UTF-8 so Arabic renders correctly
                 specs_path = os.path.join(product_folder, "مواصفات.txt")
                 with open(specs_path, "w", encoding="utf-8") as f:
                     f.write(specs_text)
-                
+
                 logger.info(f"✅ {serial} — {len(photos)} photos saved & specs created")
             else:
                 logger.warning(f"⚠️ {serial} — No photos found")
@@ -191,24 +251,15 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
 
             # Send progress update every 10%
             percent_complete = int((idx / len(products)) * 100)
-            # Only trigger on exact 10% increments (10, 20, 30...) or if it's the very last product
             if (percent_complete % 10 == 0 and percent_complete > 0) or idx == len(products):
-                # Ensure we only send one message per 10% block
-                # Using a dummy attribute on `context.chat_data` would be better, but we don't have context here.
-                # Since idx loop is synchronous, we can just track the last reported percentage natively:
-                if not hasattr(process_pipeline, "last_reported_percent"):
-                    process_pipeline.last_reported_percent = {}
-                
-                chat_progress = process_pipeline.last_reported_percent.get(chat_id, 0)
-                
-                if percent_complete > chat_progress:
-                    process_pipeline.last_reported_percent[chat_id] = percent_complete
+                if percent_complete > last_reported_percent:
+                    last_reported_percent = percent_complete
                     elapsed = time.time() - start_time
                     remaining = (elapsed / idx) * (len(products) - idx)
                     rem_min = max(1, int(remaining // 60))
-                    
+
                     await send(
-                        f"🔄 **تقدم العمل:** {percent_complete}%\n"
+                        f"🔄 *تقدم العمل:* {percent_complete}%\n"
                         f"📦 خلصت *{idx}/{len(products)}* منتج...\n"
                         f"⏱ الوقت المتبقي تقريباً: *{rem_min} دقيقة*"
                     )
@@ -253,6 +304,163 @@ async def process_pipeline(bot: Bot, chat_id: int, doc, filename: str):
 
 
 # ─────────────────────────────────────────────
+# Catalog PDF pipeline (NEW)
+# ─────────────────────────────────────────────
+async def catalog_pipeline(bot: Bot, chat_id: int, doc, filename: str):
+    temp_session = os.path.join(TEMP_DIR, uuid.uuid4().hex)
+    Path(temp_session).mkdir(parents=True, exist_ok=True)
+    excel_path = os.path.join(temp_session, filename)
+
+    async def send(text: str):
+        """Helper to send a message to the user."""
+        try:
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Failed to send message: {e}")
+
+    try:
+        # ── Step 1: Download the Excel ──
+        tg_file = await bot.get_file(doc.file_id)
+        await tg_file.download_to_drive(excel_path)
+        logger.info(f"Downloaded Excel to: {excel_path}")
+
+        # ── Step 2: Parse Excel ──
+        parsed = parse_excel(excel_path)
+        excel_name = parsed["excel_name"]
+        products = parsed["products"]
+
+        if not products:
+            await send("❌ مفيش منتجات في الملف. راجع الفورمات وابعته تاني.")
+            return
+
+        # Calculate estimated time (catalog takes longer due to specs)
+        est_minutes = max(1, (len(products) * EST_SECONDS_PER_PRODUCT_CATALOG) // 60)
+        est_text = f"{est_minutes} دقيقة" if est_minutes < 60 else f"{est_minutes // 60} ساعة و {est_minutes % 60} دقيقة"
+
+        await send(
+            f"📊 لقيت *{len(products)} منتج* في *{excel_name}*\n"
+            f"⏱ الوقت المتوقع: *{est_text}* تقريباً\n\n"
+            f"📄 هبدأ أجهز الكتالوج... 🎨"
+        )
+
+        catalog_products = []
+        failed = []
+        start_time = time.time()
+        last_reported_percent = 0
+
+        # ── Step 3: Process each product (photos + specs) ──
+        for idx, product in enumerate(products, start=1):
+            serial = product["serial_code"]
+            brand = product["brand"]
+            model = product["model_name"]
+            section = product["section_name"]
+            product_display = f"{brand} {model}".strip()
+
+            logger.info(f"[Catalog {idx}/{len(products)}] {serial}: {product_display}")
+
+            product_temp = os.path.join(temp_session, f"img_{serial}")
+
+            # Search + download first photo and generate specs concurrently
+            photos_task = asyncio.to_thread(get_reference_images, brand, model, product_temp)
+            specs_task = asyncio.to_thread(generate_product_specs, brand, model, product.get("category", ""))
+
+            photos, ai_specs = await asyncio.gather(photos_task, specs_task)
+
+            # Use the first photo for the catalog
+            photo_path = photos[0] if photos else None
+
+            catalog_products.append({
+                "serial_code": serial,
+                "brand": brand,
+                "model_name": model,
+                "section_name": section,
+                "specs": ai_specs or "",
+                "photo_path": photo_path,
+            })
+
+            if not photos:
+                failed.append(serial)
+
+            # Send progress update every 10%
+            percent_complete = int((idx / len(products)) * 100)
+            if (percent_complete % 10 == 0 and percent_complete > 0) or idx == len(products):
+                if percent_complete > last_reported_percent:
+                    last_reported_percent = percent_complete
+                    elapsed = time.time() - start_time
+                    remaining = (elapsed / idx) * (len(products) - idx)
+                    rem_min = max(1, int(remaining // 60))
+
+                    await send(
+                        f"🔄 *تقدم العمل:* {percent_complete}%\n"
+                        f"📦 خلصت *{idx}/{len(products)}* منتج...\n"
+                        f"⏱ الوقت المتبقي تقريباً: *{rem_min} دقيقة*"
+                    )
+
+        # ── Step 4: Build PDF catalog ──
+        await send("📄 بأعمل الكتالوج PDF... 🎨")
+
+        pdf_filename = f"{excel_name}_catalog.pdf"
+        pdf_path = os.path.join(temp_session, pdf_filename)
+
+        await asyncio.to_thread(
+            build_catalog_pdf, excel_name, catalog_products, pdf_path
+        )
+
+        # ── Step 5: Upload PDF to Dropbox ──
+        await send("☁️ بارفع الكتالوج على Dropbox...")
+
+        # Create a temp folder structure for upload
+        upload_dir = os.path.join(temp_session, "catalog_upload", excel_name)
+        Path(upload_dir).mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.copy2(pdf_path, os.path.join(upload_dir, pdf_filename))
+
+        dropbox_link = await asyncio.to_thread(
+            upload_output_folder, upload_dir
+        )
+
+        # ── Step 6: Send PDF to user via Telegram ──
+        try:
+            with open(pdf_path, "rb") as pdf_file:
+                await bot.send_document(
+                    chat_id=chat_id,
+                    document=pdf_file,
+                    filename=pdf_filename,
+                    caption=f"📄 *كتالوج {excel_name}*\n{len(catalog_products)} منتج",
+                    parse_mode="Markdown",
+                )
+        except Exception as e:
+            logger.error(f"Could not send PDF via Telegram: {e}")
+            await send("⚠️ الـ PDF كبير على Telegram، بس هتلاقيه على Dropbox.")
+
+        # ── Step 7: Send final message ──
+        elapsed_total = time.time() - start_time
+        elapsed_min = int(elapsed_total // 60)
+        elapsed_sec = int(elapsed_total % 60)
+
+        success_count = len(products) - len(failed)
+        await send(
+            f"✅ *الكتالوج جاهز!* 🎉\n\n"
+            f"📊 *{success_count}* منتج في الكتالوج\n"
+            f"⏱ الوقت: {elapsed_min} دقيقة و {elapsed_sec} ثانية\n\n"
+            f"📁 *حمّل الكتالوج من Dropbox:*\n{dropbox_link}"
+        )
+
+        if failed:
+            await send(
+                f"⚠️ {len(failed)} منتج ملقيتلهمش صور (موجودين في الكتالوج بدون صورة):\n"
+                + "\n".join(f"• {s}" for s in failed)
+            )
+
+    except Exception as e:
+        logger.exception(f"Catalog pipeline error: {e}")
+        await send(f"❌ *حصل مشكلة:* {str(e)[:300]}\n\nراجع الملف وابعته تاني.")
+
+    finally:
+        cleanup_temp_dir(temp_session)
+
+
+# ─────────────────────────────────────────────
 # Start the bot
 # ─────────────────────────────────────────────
 def main():
@@ -262,9 +470,11 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("photos", photos_command))
+    app.add_handler(CommandHandler("catalog", catalog_command))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-    logger.info("🤖 Product Photo Bot is running...")
+    logger.info("🤖 Product Photo Bot is running (Photos + Catalog modes)...")
     app.run_polling(drop_pending_updates=True)
 
 

@@ -1,0 +1,263 @@
+"""
+catalog_builder.py
+Generates a premium branded PDF catalog from product data.
+
+Uses fpdf2 with TTF font support for Arabic text.
+Each product gets a card with photo, name, serial code, and specs.
+The ashtry.com logo appears on every page header and the cover page.
+"""
+
+import os
+import logging
+from pathlib import Path
+from fpdf import FPDF
+
+logger = logging.getLogger(__name__)
+
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
+LOGO_PATH = os.path.join(ASSETS_DIR, "ashtry_logo.png")
+
+# ── Brand Colors ──
+COLOR_PRIMARY = (20, 33, 61)       # Dark navy
+COLOR_ACCENT = (229, 56, 59)       # Red accent
+COLOR_LIGHT_BG = (245, 245, 248)   # Light gray background
+COLOR_WHITE = (255, 255, 255)
+COLOR_TEXT = (40, 40, 40)
+COLOR_TEXT_LIGHT = (120, 120, 120)
+COLOR_DIVIDER = (200, 200, 210)
+
+
+class CatalogPDF(FPDF):
+    """Custom FPDF subclass for the ashtry.com product catalog."""
+
+    def __init__(self, excel_name: str = "Product Catalog"):
+        super().__init__(orientation="P", unit="mm", format="A4")
+        self.catalog_title = excel_name
+        self._setup_fonts()
+
+    def _setup_fonts(self):
+        """Register a Unicode-capable font for Latin + Arabic text."""
+        font_dir = os.path.join(ASSETS_DIR, "fonts")
+        noto_path = os.path.join(font_dir, "NotoSans-Regular.ttf")
+        noto_bold_path = os.path.join(font_dir, "NotoSans-Bold.ttf")
+
+        if os.path.exists(noto_path):
+            self.add_font("Noto", "", noto_path, uni=True)
+            if os.path.exists(noto_bold_path):
+                self.add_font("Noto", "B", noto_bold_path, uni=True)
+            else:
+                self.add_font("Noto", "B", noto_path, uni=True)
+            self.default_font = "Noto"
+        else:
+            # Fallback to built-in Helvetica (no Arabic support)
+            logger.warning("Noto Sans font not found — PDF will not render Arabic correctly.")
+            self.default_font = "Helvetica"
+
+    def header(self):
+        """Page header with logo and line."""
+        if self.page_no() == 1:
+            return  # Cover page has its own layout
+
+        # Logo in top-left
+        if os.path.exists(LOGO_PATH):
+            self.image(LOGO_PATH, x=10, y=8, w=35)
+
+        # Title on the right
+        self.set_font(self.default_font, "B", 10)
+        self.set_text_color(*COLOR_TEXT_LIGHT)
+        self.set_xy(50, 12)
+        self.cell(0, 6, self.catalog_title, align="L")
+
+        # Accent line
+        self.set_draw_color(*COLOR_ACCENT)
+        self.set_line_width(0.6)
+        self.line(10, 22, 200, 22)
+
+        self.set_y(26)
+
+    def footer(self):
+        """Page footer with page number."""
+        self.set_y(-15)
+        self.set_font(self.default_font, "", 8)
+        self.set_text_color(*COLOR_TEXT_LIGHT)
+        self.cell(0, 10, f"ashtry.com  |  Page {self.page_no()}/{{nb}}", align="C")
+
+    def add_cover_page(self, product_count: int):
+        """Create a branded cover page."""
+        self.add_page()
+        self.alias_nb_pages()
+
+        # Background gradient effect — solid color block at top
+        self.set_fill_color(*COLOR_PRIMARY)
+        self.rect(0, 0, 210, 140, "F")
+
+        # Logo centered
+        if os.path.exists(LOGO_PATH):
+            self.image(LOGO_PATH, x=55, y=30, w=100)
+
+        # Title
+        self.set_y(95)
+        self.set_font(self.default_font, "B", 28)
+        self.set_text_color(*COLOR_WHITE)
+        self.cell(0, 15, "Product Catalog", align="C", new_x="LMARGIN", new_y="NEXT")
+
+        # Subtitle — Excel name
+        self.set_font(self.default_font, "", 16)
+        self.set_text_color(200, 200, 220)
+        self.cell(0, 10, self.catalog_title, align="C", new_x="LMARGIN", new_y="NEXT")
+
+        # Decorative line
+        self.set_y(135)
+        self.set_draw_color(*COLOR_ACCENT)
+        self.set_line_width(1)
+        self.line(70, 132, 140, 132)
+
+        # Product count
+        self.set_y(160)
+        self.set_font(self.default_font, "B", 40)
+        self.set_text_color(*COLOR_PRIMARY)
+        self.cell(0, 20, str(product_count), align="C", new_x="LMARGIN", new_y="NEXT")
+
+        self.set_font(self.default_font, "", 14)
+        self.set_text_color(*COLOR_TEXT_LIGHT)
+        self.cell(0, 8, "Products", align="C", new_x="LMARGIN", new_y="NEXT")
+
+        # Footer line
+        self.set_y(250)
+        self.set_font(self.default_font, "", 10)
+        self.set_text_color(*COLOR_TEXT_LIGHT)
+        self.cell(0, 8, "www.ashtry.com", align="C")
+
+    def add_product_card(self, serial: str, brand: str, model: str,
+                         section: str, specs: str, photo_path: str = None):
+        """Add a product card. Automatically handles page breaks."""
+        card_height = 75  # estimated height per card
+
+        # Check if we need a new page
+        if self.get_y() + card_height > 265:
+            self.add_page()
+
+        y_start = self.get_y() + 3
+
+        # ── Card background ──
+        self.set_fill_color(*COLOR_LIGHT_BG)
+        self.rounded_rect(10, y_start, 190, card_height, 3, "F")
+
+        # ── Product photo ──
+        photo_x = 14
+        photo_y = y_start + 4
+        photo_w = 55
+        photo_h = 55
+
+        if photo_path and os.path.exists(photo_path):
+            try:
+                # White photo background
+                self.set_fill_color(*COLOR_WHITE)
+                self.rounded_rect(photo_x, photo_y, photo_w, photo_h, 2, "F")
+                # Fit image inside the box
+                self.image(photo_path, x=photo_x + 2, y=photo_y + 2,
+                          w=photo_w - 4, h=photo_h - 4, keep_aspect_ratio=True)
+            except Exception as e:
+                logger.warning(f"Could not embed photo for {serial}: {e}")
+                self.set_fill_color(230, 230, 235)
+                self.rounded_rect(photo_x, photo_y, photo_w, photo_h, 2, "F")
+                self.set_xy(photo_x, photo_y + 22)
+                self.set_font(self.default_font, "", 9)
+                self.set_text_color(*COLOR_TEXT_LIGHT)
+                self.cell(photo_w, 10, "No Photo", align="C")
+        else:
+            # Placeholder
+            self.set_fill_color(230, 230, 235)
+            self.rounded_rect(photo_x, photo_y, photo_w, photo_h, 2, "F")
+            self.set_xy(photo_x, photo_y + 22)
+            self.set_font(self.default_font, "", 9)
+            self.set_text_color(*COLOR_TEXT_LIGHT)
+            self.cell(photo_w, 10, "No Photo", align="C")
+
+        # ── Text area (right side) ──
+        text_x = photo_x + photo_w + 6
+        text_w = 190 - (text_x - 10) - 4
+
+        # Serial code badge
+        self.set_fill_color(*COLOR_ACCENT)
+        self.set_xy(text_x, y_start + 4)
+        self.set_font(self.default_font, "B", 9)
+        self.set_text_color(*COLOR_WHITE)
+        badge_w = self.get_string_width(f"  {serial}  ") + 4
+        self.cell(badge_w, 7, f"  {serial}  ", fill=True, align="C")
+
+        # Section name (small)
+        self.set_xy(text_x + badge_w + 3, y_start + 5)
+        self.set_font(self.default_font, "", 7)
+        self.set_text_color(*COLOR_TEXT_LIGHT)
+        section_display = section[:40] + "..." if len(section) > 40 else section
+        self.cell(text_w - badge_w - 3, 5, section_display)
+
+        # Product name
+        self.set_xy(text_x, y_start + 14)
+        self.set_font(self.default_font, "B", 12)
+        self.set_text_color(*COLOR_PRIMARY)
+        product_name = f"{brand} {model}".strip()
+        self.multi_cell(text_w, 6, product_name, new_x="LEFT", new_y="NEXT")
+
+        # Specs
+        if specs:
+            spec_y = self.get_y() + 1
+            self.set_xy(text_x, spec_y)
+            self.set_font(self.default_font, "", 7)
+            self.set_text_color(*COLOR_TEXT)
+            # Truncate specs to fit card
+            spec_lines = specs.strip().split("\n")
+            truncated = "\n".join(spec_lines[:6])
+            if len(spec_lines) > 6:
+                truncated += "\n..."
+            available_h = (y_start + card_height - 4) - spec_y
+            self.multi_cell(text_w, 3.5, truncated, new_x="LEFT", new_y="NEXT")
+
+        # Move cursor below card
+        self.set_y(y_start + card_height + 3)
+
+
+def build_catalog_pdf(
+    excel_name: str,
+    products_data: list[dict],
+    output_path: str,
+) -> str:
+    """
+    Build a PDF catalog from product data.
+
+    Each item in products_data should have:
+    {
+        "serial_code": str,
+        "brand": str,
+        "model_name": str,
+        "section_name": str,
+        "specs": str,            # AI-generated specs text
+        "photo_path": str|None,  # path to the product photo for the PDF
+    }
+
+    Returns the path to the generated PDF.
+    """
+    pdf = CatalogPDF(excel_name=excel_name)
+
+    # Cover page
+    pdf.add_cover_page(product_count=len(products_data))
+
+    # Start content pages
+    pdf.add_page()
+
+    for product in products_data:
+        pdf.add_product_card(
+            serial=product.get("serial_code", "N/A"),
+            brand=product.get("brand", ""),
+            model=product.get("model_name", ""),
+            section=product.get("section_name", ""),
+            specs=product.get("specs", ""),
+            photo_path=product.get("photo_path"),
+        )
+
+    # Ensure output directory exists
+    Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
+    pdf.output(output_path)
+    logger.info(f"Catalog PDF generated: {output_path} ({len(products_data)} products)")
+    return output_path
