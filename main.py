@@ -406,20 +406,9 @@ async def catalog_pipeline(bot: Bot, chat_id: int, doc, filename: str):
             build_catalog_pdf, excel_name, catalog_products, pdf_path
         )
 
-        # ── Step 5: Upload PDF to Dropbox ──
-        await send("☁️ بارفع الكتالوج على Dropbox...")
+        # ── Step 5: Send PDF directly to user via Telegram ──
+        success_count = len(products) - len(failed)
 
-        # Create a temp folder structure for upload
-        upload_dir = os.path.join(temp_session, "catalog_upload", excel_name)
-        Path(upload_dir).mkdir(parents=True, exist_ok=True)
-        import shutil
-        shutil.copy2(pdf_path, os.path.join(upload_dir, pdf_filename))
-
-        dropbox_link = await asyncio.to_thread(
-            upload_output_folder, upload_dir
-        )
-
-        # ── Step 6: Send PDF to user via Telegram ──
         try:
             with open(pdf_path, "rb") as pdf_file:
                 await bot.send_document(
@@ -431,19 +420,18 @@ async def catalog_pipeline(bot: Bot, chat_id: int, doc, filename: str):
                 )
         except Exception as e:
             logger.error(f"Could not send PDF via Telegram: {e}")
-            await send("⚠️ الـ PDF كبير على Telegram، بس هتلاقيه على Dropbox.")
+            await send(f"❌ مقدرتش أبعت الـ PDF: {str(e)[:200]}")
+            return
 
-        # ── Step 7: Send final message ──
+        # ── Step 6: Send final message ──
         elapsed_total = time.time() - start_time
         elapsed_min = int(elapsed_total // 60)
         elapsed_sec = int(elapsed_total % 60)
 
-        success_count = len(products) - len(failed)
         await send(
             f"✅ *الكتالوج جاهز!* 🎉\n\n"
             f"📊 *{success_count}* منتج في الكتالوج\n"
-            f"⏱ الوقت: {elapsed_min} دقيقة و {elapsed_sec} ثانية\n\n"
-            f"📁 *حمّل الكتالوج من Dropbox:*\n{dropbox_link}"
+            f"⏱ الوقت: {elapsed_min} دقيقة و {elapsed_sec} ثانية"
         )
 
         if failed:
