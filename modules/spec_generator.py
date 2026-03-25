@@ -44,7 +44,7 @@ def generate_product_specs(brand: str, model: str, category: str = "") -> dict:
         f"Analyze the following product: {product_name}\n\n"
         "Return a valid JSON object with EXACTLY these three keys:\n"
         "1. \"clean_name\": A clean, highly professional, Short product name strictly in ENGLISH (e.g., 'Philips Air Fryer NA322'). Do NOT output Arabic here even if the input contains Arabic.\n"
-        "2. \"specs\": A detailed bulleted list of key technical specs and features in plain text. Use hyphens (-) for bullets. No markdown asterisks.\n"
+        "2. \"specs\": A detailed bulleted list of key technical specs and features in plain text. Use hyphens (-) for bullets. No markdown asterisks. Do NOT start the list with 'المواصفات:', 'Specs:', or any title. Just the bullets directly.\n"
         "3. \"colors\": The available color options (e.g., 'Black', 'White', 'Silver') or 'N/A' if unknown.\n\n"
         "Do not include any code block formatting like ```json in the output, just the raw JSON."
     )
