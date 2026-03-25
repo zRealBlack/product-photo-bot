@@ -280,12 +280,20 @@ def build_catalog_pdf(
     # Cover page
     pdf.add_cover_page(product_count=len(products_data), subtitle=subtitle)
 
-    # Group products by section
+    # Group products by section (Sheet name + Section name)
     from collections import defaultdict
     sections = defaultdict(list)
     for product in products_data:
+        sheet = product.get("sheet_name", "عام")
         sec = product.get("section_name", "عام")
-        sections[sec].append(product)
+        
+        # Avoid duplicating if sheet_name and section_name are identical
+        if sheet and sheet != sec:
+            combined_sec = f"{sheet} - {sec}"
+        else:
+            combined_sec = sec
+            
+        sections[combined_sec].append(product)
 
     # Start content pages
     pdf.add_page()

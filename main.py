@@ -374,6 +374,7 @@ async def catalog_pipeline(bot: Bot, chat_id: int, doc, filename: str):
                 "clean_name": ai_result.get("clean_name", product_display),
                 "model_name": model,
                 "section_name": section,
+                "sheet_name": product.get("sheet_name", "عام"),
                 "specs": ai_result.get("specs", ""),
                 "colors": ai_result.get("colors", ""),
                 "photo_path": photo_path,

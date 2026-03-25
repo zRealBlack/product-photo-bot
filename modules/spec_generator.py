@@ -54,7 +54,7 @@ def generate_product_specs(brand: str, model: str, category: str = "") -> dict:
         "generationConfig": {
             "temperature": 0.2,
             "maxOutputTokens": 600,
-            # We can optionally force JSON response MIME type but prompting usually works well enough
+            "responseMimeType": "application/json",
         }
     }
 

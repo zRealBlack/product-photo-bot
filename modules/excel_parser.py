@@ -59,23 +59,20 @@ def parse_excel(file_path: str) -> dict:
             if all((v is None or str(v).strip() == "") for v in row_values):
                 continue
 
-            # Detect section header rows (e.g., a fully merged row with only one text value)
+            # Get all non-empty cell values for this row
             non_empty = [str(v).strip() for v in row_values if v is not None and str(v).strip() != ""]
-            if len(non_empty) == 1:
-                val = non_empty[0]
-                # Ignore table headers
-                if val not in ("كود الصنف", "Serial", "Code", "الكود"):
-                    current_section = val
-                continue
 
             serial = str(row_values[0]).strip() if row_values[0] else ""
             category = str(row_values[1]).strip() if len(row_values) > 1 and row_values[1] else ""
             brand = str(row_values[2]).strip() if len(row_values) > 2 and row_values[2] else ""
             model = str(row_values[3]).strip() if len(row_values) > 3 and row_values[3] else ""
 
-            # Fallback section detection (if it wasn't merged but serial is empty and model has text)
-            if not serial and model:
-                current_section = model
+            # Detect section header rows (no serial code, but contains text)
+            if not serial and len(non_empty) > 0:
+                # Join all text in the row to form the section title
+                val = " - ".join(non_empty)
+                if val not in ("كود الصنف", "Serial", "Code", "الكود"):
+                    current_section = val
                 continue
 
             # Skip header row (contains column labels)
