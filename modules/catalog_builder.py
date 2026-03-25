@@ -2,7 +2,7 @@
 catalog_builder.py
 Generates a premium branded PDF catalog from product data.
 
-Uses fpdf2 with TTF font support for Arabic text.
+Uses fpdf2 with TTF font support for Unicode text.
 Each product gets a card with photo, name, serial code, and specs.
 The ashtry.com logo appears on every page header and the cover page.
 """
@@ -42,11 +42,11 @@ class CatalogPDF(FPDF):
         noto_bold_path = os.path.join(font_dir, "NotoSans-Bold.ttf")
 
         if os.path.exists(noto_path):
-            self.add_font("Noto", "", noto_path, uni=True)
+            self.add_font("Noto", "", fname=noto_path)
             if os.path.exists(noto_bold_path):
-                self.add_font("Noto", "B", noto_bold_path, uni=True)
+                self.add_font("Noto", "B", fname=noto_bold_path)
             else:
-                self.add_font("Noto", "B", noto_path, uni=True)
+                self.add_font("Noto", "B", fname=noto_path)
             self.default_font = "Noto"
         else:
             # Fallback to built-in Helvetica (no Arabic support)
@@ -60,7 +60,10 @@ class CatalogPDF(FPDF):
 
         # Logo in top-left
         if os.path.exists(LOGO_PATH):
-            self.image(LOGO_PATH, x=10, y=8, w=35)
+            try:
+                self.image(LOGO_PATH, x=10, y=8, w=35)
+            except Exception:
+                pass
 
         # Title on the right
         self.set_font(self.default_font, "B", 10)
@@ -87,13 +90,16 @@ class CatalogPDF(FPDF):
         self.add_page()
         self.alias_nb_pages()
 
-        # Background gradient effect — solid color block at top
+        # Background — solid color block at top
         self.set_fill_color(*COLOR_PRIMARY)
         self.rect(0, 0, 210, 140, "F")
 
         # Logo centered
         if os.path.exists(LOGO_PATH):
-            self.image(LOGO_PATH, x=55, y=30, w=100)
+            try:
+                self.image(LOGO_PATH, x=55, y=30, w=100)
+            except Exception:
+                pass
 
         # Title
         self.set_y(95)
@@ -107,7 +113,6 @@ class CatalogPDF(FPDF):
         self.cell(0, 10, self.catalog_title, align="C", new_x="LMARGIN", new_y="NEXT")
 
         # Decorative line
-        self.set_y(135)
         self.set_draw_color(*COLOR_ACCENT)
         self.set_line_width(1)
         self.line(70, 132, 140, 132)
@@ -122,14 +127,14 @@ class CatalogPDF(FPDF):
         self.set_text_color(*COLOR_TEXT_LIGHT)
         self.cell(0, 8, "Products", align="C", new_x="LMARGIN", new_y="NEXT")
 
-        # Footer line
+        # Footer
         self.set_y(250)
         self.set_font(self.default_font, "", 10)
         self.set_text_color(*COLOR_TEXT_LIGHT)
         self.cell(0, 8, "www.ashtry.com", align="C")
 
     def add_product_card(self, serial: str, brand: str, model: str,
-                         section: str, specs: str, photo_path: str = None):
+                         section: str, specs: str, photo_path: str = ""):
         """Add a product card. Automatically handles page breaks."""
         card_height = 75  # estimated height per card
 
@@ -141,7 +146,7 @@ class CatalogPDF(FPDF):
 
         # ── Card background ──
         self.set_fill_color(*COLOR_LIGHT_BG)
-        self.rounded_rect(10, y_start, 190, card_height, 3, "F")
+        self.rect(10, y_start, 190, card_height, "F")
 
         # ── Product photo ──
         photo_x = 14
@@ -153,26 +158,15 @@ class CatalogPDF(FPDF):
             try:
                 # White photo background
                 self.set_fill_color(*COLOR_WHITE)
-                self.rounded_rect(photo_x, photo_y, photo_w, photo_h, 2, "F")
+                self.rect(photo_x, photo_y, photo_w, photo_h, "F")
                 # Fit image inside the box
                 self.image(photo_path, x=photo_x + 2, y=photo_y + 2,
                           w=photo_w - 4, h=photo_h - 4, keep_aspect_ratio=True)
             except Exception as e:
                 logger.warning(f"Could not embed photo for {serial}: {e}")
-                self.set_fill_color(230, 230, 235)
-                self.rounded_rect(photo_x, photo_y, photo_w, photo_h, 2, "F")
-                self.set_xy(photo_x, photo_y + 22)
-                self.set_font(self.default_font, "", 9)
-                self.set_text_color(*COLOR_TEXT_LIGHT)
-                self.cell(photo_w, 10, "No Photo", align="C")
+                self._draw_no_photo(photo_x, photo_y, photo_w, photo_h)
         else:
-            # Placeholder
-            self.set_fill_color(230, 230, 235)
-            self.rounded_rect(photo_x, photo_y, photo_w, photo_h, 2, "F")
-            self.set_xy(photo_x, photo_y + 22)
-            self.set_font(self.default_font, "", 9)
-            self.set_text_color(*COLOR_TEXT_LIGHT)
-            self.cell(photo_w, 10, "No Photo", align="C")
+            self._draw_no_photo(photo_x, photo_y, photo_w, photo_h)
 
         # ── Text area (right side) ──
         text_x = photo_x + photo_w + 6
@@ -190,7 +184,7 @@ class CatalogPDF(FPDF):
         self.set_xy(text_x + badge_w + 3, y_start + 5)
         self.set_font(self.default_font, "", 7)
         self.set_text_color(*COLOR_TEXT_LIGHT)
-        section_display = section[:40] + "..." if len(section) > 40 else section
+        section_display = (section[:40] + "...") if len(section) > 40 else section
         self.cell(text_w - badge_w - 3, 5, section_display)
 
         # Product name
@@ -211,16 +205,24 @@ class CatalogPDF(FPDF):
             truncated = "\n".join(spec_lines[:6])
             if len(spec_lines) > 6:
                 truncated += "\n..."
-            available_h = (y_start + card_height - 4) - spec_y
             self.multi_cell(text_w, 3.5, truncated, new_x="LEFT", new_y="NEXT")
 
         # Move cursor below card
         self.set_y(y_start + card_height + 3)
 
+    def _draw_no_photo(self, x, y, w, h):
+        """Draw a 'No Photo' placeholder box."""
+        self.set_fill_color(230, 230, 235)
+        self.rect(x, y, w, h, "F")
+        self.set_xy(x, y + (h / 2) - 5)
+        self.set_font(self.default_font, "", 9)
+        self.set_text_color(*COLOR_TEXT_LIGHT)
+        self.cell(w, 10, "No Photo", align="C")
+
 
 def build_catalog_pdf(
     excel_name: str,
-    products_data: list[dict],
+    products_data: list,
     output_path: str,
 ) -> str:
     """
@@ -232,8 +234,8 @@ def build_catalog_pdf(
         "brand": str,
         "model_name": str,
         "section_name": str,
-        "specs": str,            # AI-generated specs text
-        "photo_path": str|None,  # path to the product photo for the PDF
+        "specs": str,
+        "photo_path": str or None,
     }
 
     Returns the path to the generated PDF.
@@ -253,7 +255,7 @@ def build_catalog_pdf(
             model=product.get("model_name", ""),
             section=product.get("section_name", ""),
             specs=product.get("specs", ""),
-            photo_path=product.get("photo_path"),
+            photo_path=product.get("photo_path") or "",
         )
 
     # Ensure output directory exists
