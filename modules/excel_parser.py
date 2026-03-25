@@ -67,16 +67,23 @@ def parse_excel(file_path: str) -> dict:
             brand = str(row_values[2]).strip() if len(row_values) > 2 and row_values[2] else ""
             model = str(row_values[3]).strip() if len(row_values) > 3 and row_values[3] else ""
 
-            # Detect section header rows (no serial code, but contains text)
-            if not serial and len(non_empty) > 0:
-                # Join all text in the row to form the section title
-                val = " - ".join(non_empty)
-                if val not in ("كود الصنف", "Serial", "Code", "الكود"):
-                    current_section = val
+            # Skip header row (contains column labels)
+            if serial in ("كود الصنف", "Serial", "Code", "الكود", "التصنيف", "الصنف"):
                 continue
 
-            # Skip header row (contains column labels)
-            if serial in ("كود الصنف", "Serial", "Code", "الكود"):
+            # Detect section header rows
+            # Case 1: Only exactly ONE cell in the entire row has text (perfect for merged rows!)
+            if len(non_empty) == 1:
+                val = non_empty[0]
+                if val not in ("كود الصنف", "Serial", "Code", "الكود", "التصنيف", "الصنف"):
+                    current_section = val
+                continue
+                
+            # Case 2: Row has no serial code (Col A is empty) but has other text (e.g. text in Col B/C)
+            if not serial and len(non_empty) > 0:
+                val = " - ".join(non_empty)
+                if val not in ("كود الصنف", "Serial", "Code", "الكود", "التصنيف", "الصنف"):
+                    current_section = val
                 continue
 
             # Valid product row: must have a serial code and model name
