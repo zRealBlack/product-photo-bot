@@ -149,32 +149,31 @@ class CatalogPDF(FPDF):
         self.set_text_color(*COLOR_TEXT_LIGHT)
         self.cell(0, 8, "www.ashtry.com", align="C")
 
-    def add_section_header(self, section_name: str):
-        """Add a full-width section header to separate product categories."""
-        # Need space for header + at least 1 product card underneath
+    def add_section_header(self, title: str, is_main: bool = False):
+        """Add a section header. Main headers are bigger (Tabs), sub-headers are smaller."""
         if self.get_y() > 200:
             self.add_page()
             
-        self.set_y(self.get_y() + 8)
+        self.set_y(self.get_y() + (12 if is_main else 6))
         
         # Draw section block
         self.set_fill_color(*COLOR_PRIMARY)
         y_start = self.get_y()
-        self.rect(10, y_start, 190, 18, "F")
+        self.rect(10, y_start, 190, 18 if is_main else 12, "F")
         
         # Red accent bar on the left
         self.set_fill_color(*COLOR_ACCENT)
-        self.rect(10, y_start, 4, 18, "F")
+        self.rect(10, y_start, 4, 18 if is_main else 12, "F")
         
         # Text
-        self.set_xy(18, y_start + 4)
-        self.set_font(self.default_font, "B", 14)
+        self.set_xy(18, y_start + (4 if is_main else 2))
+        self.set_font(self.default_font, "B", 16 if is_main else 12)
         self.set_text_color(*COLOR_WHITE)
-        self.cell(178, 10, f"قسم فرعي: {section_name}", align="L")
+        self.cell(178, 10 if is_main else 8, title, align="L")
         
-        self.set_y(y_start + 24)
+        self.set_y(y_start + (22 if is_main else 16))
 
-    def add_product_card(self, serial: str, clean_name: str,
+    def add_product_card(self, serial: str, product_name: str,
                          specs: str, colors: str, photo_path: str = ""):
         """Add a product card. Automatically handles page breaks."""
         card_height = 80  # increased slightly to fit more specs/colors
@@ -232,14 +231,10 @@ class CatalogPDF(FPDF):
         self.set_xy(text_x, y_start + 13)
         self.set_font(self.default_font, "B", 13)
         self.set_text_color(*COLOR_PRIMARY)
-        self.multi_cell(text_w, 7, clean_name, new_x="LEFT", new_y="NEXT")
+        self.multi_cell(text_w, 7, product_name, new_x="LEFT", new_y="NEXT")
 
-        # Specs header
+        # No static Specs header, draw specs directly
         spec_y = self.get_y() + 2
-        self.set_xy(text_x, spec_y)
-        self.set_font(self.default_font, "B", 9)
-        self.set_text_color(*COLOR_TEXT)
-        self.cell(0, 5, "المواصفات:", new_x="LEFT", new_y="NEXT")
 
         # Specs lines
         if specs:
@@ -296,35 +291,35 @@ def build_catalog_pdf(
     # Cover page
     pdf.add_cover_page(product_count=len(products_data), subtitle=subtitle)
 
-    # Group products by section (Sheet name + Section name)
+    # Group products by Sheet -> Section
     from collections import defaultdict
-    sections = defaultdict(list)
+    sheets = defaultdict(lambda: defaultdict(list))
     for product in products_data:
         sheet = product.get("sheet_name", "عام")
         sec = product.get("section_name", "عام")
         
-        # Avoid duplicating if sheet_name and section_name are identical
-        if sheet and sheet != sec:
-            combined_sec = f"{sheet} - {sec}"
-        else:
-            combined_sec = sec
-            
-        sections[combined_sec].append(product)
+        sheets[sheet][sec].append(product)
 
     # Start content pages
     pdf.add_page()
 
-    for sec_name, sec_products in sections.items():
-        pdf.add_section_header(sec_name)
+    for sheet_name, sections in sheets.items():
+        # Draw the big Main header for the Sheet
+        pdf.add_section_header(sheet_name, is_main=True)
         
-        for product in sec_products:
-            pdf.add_product_card(
-                serial=product.get("serial_code", "N/A"),
-                clean_name=product.get("clean_name", "Unknown Product"),
-                specs=product.get("specs", ""),
-                colors=product.get("colors", ""),
-                photo_path=product.get("photo_path") or "",
-            )
+        for sec_name, sec_products in sections.items():
+            # If the section name is the exact same as the sheet name, skip the sub-header to avoid repetition
+            if sec_name != sheet_name:
+                pdf.add_section_header(f"قسم فرعي: {sec_name}", is_main=False)
+            
+            for product in sec_products:
+                pdf.add_product_card(
+                    serial=product.get("serial_code", "N/A"),
+                    product_name=product.get("product_name", "Unknown Product"),
+                    specs=product.get("specs", ""),
+                    colors=product.get("colors", ""),
+                    photo_path=product.get("photo_path") or "",
+                )
 
     # Ensure output directory exists
     Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)

@@ -371,7 +371,7 @@ async def catalog_pipeline(bot: Bot, chat_id: int, doc, filename: str):
 
             catalog_products.append({
                 "serial_code": serial,
-                "clean_name": ai_result.get("clean_name", product_display),
+                "product_name": product_display,
                 "model_name": model,
                 "section_name": section,
                 "sheet_name": product.get("sheet_name", "عام"),

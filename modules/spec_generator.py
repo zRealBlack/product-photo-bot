@@ -18,14 +18,12 @@ def generate_product_specs(brand: str, model: str, category: str = "") -> dict:
     Calls Gemini API to get a structured JSON response.
     Returns:
     {
-        "clean_name": str,  # The readable product name
         "specs": str,       # Bulleted list of specs
         "colors": str       # Available colors or "N/A"
     }
-    Fallback returns the original brand/model and empty specs.
+    Fallback returns empty specs.
     """
     fallback_result = {
-        "clean_name": f"{brand} {model}".strip(),
         "specs": "",
         "colors": ""
     }
@@ -42,10 +40,9 @@ def generate_product_specs(brand: str, model: str, category: str = "") -> dict:
 
     prompt = (
         f"Analyze the following product: {product_name}\n\n"
-        "Return a valid JSON object with EXACTLY these three keys:\n"
-        "1. \"clean_name\": A clean, readable name for the product (e.g., 'Philips Air Fryer' instead of 'PHILIPS.Airfryer 20W HD9200 bla bla').\n"
-        "2. \"specs\": A detailed bulleted list of key technical specs and features in plain text. Use hyphens (-) for bullets. No markdown asterisks.\n"
-        "3. \"colors\": The available color options (e.g., 'Black', 'White', 'Silver') or 'N/A' if unknown.\n\n"
+        "Return a valid JSON object with EXACTLY these two keys:\n"
+        "1. \"specs\": A detailed bulleted list of key technical specs and features in plain text. Use hyphens (-) for bullets. No markdown asterisks.\n"
+        "2. \"colors\": The available color options (e.g., 'Black', 'White', 'Silver') or 'N/A' if unknown.\n\n"
         "Do not include any code block formatting like ```json in the output, just the raw JSON."
     )
 
@@ -86,8 +83,6 @@ def generate_product_specs(brand: str, model: str, category: str = "") -> dict:
                 try:
                     parsed_json = json.loads(text)
                     
-                    # Ensure all keys exist
-                    clean_name = parsed_json.get("clean_name", fallback_result["clean_name"])
                     specs = parsed_json.get("specs", "")
                     colors = parsed_json.get("colors", "")
                     
@@ -95,7 +90,6 @@ def generate_product_specs(brand: str, model: str, category: str = "") -> dict:
                     specs = specs.replace("**", "")
                     
                     return {
-                        "clean_name": clean_name,
                         "specs": specs,
                         "colors": colors
                     }
