@@ -364,17 +364,18 @@ async def catalog_pipeline(bot: Bot, chat_id: int, doc, filename: str):
             photos_task = asyncio.to_thread(get_reference_images, brand, model, product_temp)
             specs_task = asyncio.to_thread(generate_product_specs, brand, model, product.get("category", ""))
 
-            photos, ai_specs = await asyncio.gather(photos_task, specs_task)
+            photos, ai_result = await asyncio.gather(photos_task, specs_task)
 
             # Use the first photo for the catalog
             photo_path = photos[0] if photos else None
 
             catalog_products.append({
                 "serial_code": serial,
-                "brand": brand,
+                "clean_name": ai_result.get("clean_name", product_display),
                 "model_name": model,
                 "section_name": section,
-                "specs": ai_specs or "",
+                "specs": ai_result.get("specs", ""),
+                "colors": ai_result.get("colors", ""),
                 "photo_path": photo_path,
             })
 
@@ -399,11 +400,15 @@ async def catalog_pipeline(bot: Bot, chat_id: int, doc, filename: str):
         # ── Step 4: Build PDF catalog ──
         await send("📄 بأعمل الكتالوج PDF... 🎨")
 
-        pdf_filename = f"{excel_name}_catalog.pdf"
+        from datetime import datetime
+        today_date = datetime.now().strftime("%Y-%m-%d")
+        
+        pdf_title = f"Ashtry Catalog [{today_date}]"
+        pdf_filename = f"{pdf_title}.pdf"
         pdf_path = os.path.join(temp_session, pdf_filename)
 
         await asyncio.to_thread(
-            build_catalog_pdf, excel_name, catalog_products, pdf_path
+            build_catalog_pdf, pdf_title, excel_name, catalog_products, pdf_path
         )
 
         # ── Step 5: Send PDF directly to user via Telegram ──
@@ -461,6 +466,9 @@ def main():
     app.add_handler(CommandHandler("photos", photos_command))
     app.add_handler(CommandHandler("catalog", catalog_command))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    
+    # Text fallback: any text that is not a command acts as /start
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
 
     logger.info("🤖 Product Photo Bot is running (Photos + Catalog modes)...")
     app.run_polling(drop_pending_updates=True)

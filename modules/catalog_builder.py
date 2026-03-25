@@ -1,9 +1,9 @@
 """
 catalog_builder.py
-Generates a premium branded PDF catalog from product data.
+Generates a premium branded PDF catalog from product data, grouped by sections.
 
 Uses fpdf2 with TTF font support for Unicode text.
-Each product gets a card with photo, name, serial code, and specs.
+Each product gets a card with photo, clean name, serial code, specs, and colors.
 The ashtry.com logo appears on every page header and the cover page.
 """
 
@@ -24,15 +24,14 @@ COLOR_LIGHT_BG = (245, 245, 248)   # Light gray background
 COLOR_WHITE = (255, 255, 255)
 COLOR_TEXT = (40, 40, 40)
 COLOR_TEXT_LIGHT = (120, 120, 120)
-COLOR_DIVIDER = (200, 200, 210)
 
 
 class CatalogPDF(FPDF):
     """Custom FPDF subclass for the ashtry.com product catalog."""
 
-    def __init__(self, excel_name: str = "Product Catalog"):
+    def __init__(self, catalog_title: str = "Product Catalog"):
         super().__init__(orientation="P", unit="mm", format="A4")
-        self.catalog_title = excel_name
+        self.catalog_title = catalog_title
         self._setup_fonts()
 
     def _setup_fonts(self):
@@ -85,7 +84,7 @@ class CatalogPDF(FPDF):
         self.set_text_color(*COLOR_TEXT_LIGHT)
         self.cell(0, 10, f"ashtry.com  |  Page {self.page_no()}/{{nb}}", align="C")
 
-    def add_cover_page(self, product_count: int):
+    def add_cover_page(self, product_count: int, subtitle: str = ""):
         """Create a branded cover page."""
         self.add_page()
         self.alias_nb_pages()
@@ -103,14 +102,15 @@ class CatalogPDF(FPDF):
 
         # Title
         self.set_y(95)
-        self.set_font(self.default_font, "B", 28)
+        self.set_font(self.default_font, "B", 24)
         self.set_text_color(*COLOR_WHITE)
-        self.cell(0, 15, "Product Catalog", align="C", new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 15, self.catalog_title, align="C", new_x="LMARGIN", new_y="NEXT")
 
-        # Subtitle — Excel name
-        self.set_font(self.default_font, "", 16)
-        self.set_text_color(200, 200, 220)
-        self.cell(0, 10, self.catalog_title, align="C", new_x="LMARGIN", new_y="NEXT")
+        # Subtitle
+        if subtitle:
+            self.set_font(self.default_font, "", 16)
+            self.set_text_color(200, 200, 220)
+            self.cell(0, 10, subtitle, align="C", new_x="LMARGIN", new_y="NEXT")
 
         # Decorative line
         self.set_draw_color(*COLOR_ACCENT)
@@ -133,16 +133,41 @@ class CatalogPDF(FPDF):
         self.set_text_color(*COLOR_TEXT_LIGHT)
         self.cell(0, 8, "www.ashtry.com", align="C")
 
-    def add_product_card(self, serial: str, brand: str, model: str,
-                         section: str, specs: str, photo_path: str = ""):
+    def add_section_header(self, section_name: str):
+        """Add a full-width section header to separate product categories."""
+        # Need space for header + at least 1 product card underneath
+        if self.get_y() > 200:
+            self.add_page()
+            
+        self.set_y(self.get_y() + 8)
+        
+        # Draw section block
+        self.set_fill_color(*COLOR_PRIMARY)
+        y_start = self.get_y()
+        self.rect(10, y_start, 190, 18, "F")
+        
+        # Red accent bar on the left
+        self.set_fill_color(*COLOR_ACCENT)
+        self.rect(10, y_start, 4, 18, "F")
+        
+        # Text
+        self.set_xy(18, y_start + 4)
+        self.set_font(self.default_font, "B", 14)
+        self.set_text_color(*COLOR_WHITE)
+        self.cell(178, 10, f"قسم فرعي: {section_name}", align="L")
+        
+        self.set_y(y_start + 24)
+
+    def add_product_card(self, serial: str, clean_name: str,
+                         specs: str, colors: str, photo_path: str = ""):
         """Add a product card. Automatically handles page breaks."""
-        card_height = 75  # estimated height per card
+        card_height = 80  # increased slightly to fit more specs/colors
 
         # Check if we need a new page
         if self.get_y() + card_height > 265:
             self.add_page()
 
-        y_start = self.get_y() + 3
+        y_start = self.get_y() + 2
 
         # ── Card background ──
         self.set_fill_color(*COLOR_LIGHT_BG)
@@ -151,8 +176,8 @@ class CatalogPDF(FPDF):
         # ── Product photo ──
         photo_x = 14
         photo_y = y_start + 4
-        photo_w = 55
-        photo_h = 55
+        photo_w = 60
+        photo_h = 60
 
         if photo_path and os.path.exists(photo_path):
             try:
@@ -180,35 +205,44 @@ class CatalogPDF(FPDF):
         badge_w = self.get_string_width(f"  {serial}  ") + 4
         self.cell(badge_w, 7, f"  {serial}  ", fill=True, align="C")
 
-        # Section name (small)
-        self.set_xy(text_x + badge_w + 3, y_start + 5)
-        self.set_font(self.default_font, "", 7)
-        self.set_text_color(*COLOR_TEXT_LIGHT)
-        section_display = (section[:40] + "...") if len(section) > 40 else section
-        self.cell(text_w - badge_w - 3, 5, section_display)
+        # Colors label (top right of card)
+        if colors and colors.lower() != "n/a" and colors.lower() != "none":
+            self.set_xy(190 - self.get_string_width(f"الألوان: {colors}") - 5, y_start + 5)
+            self.set_font(self.default_font, "", 8)
+            self.set_text_color(*COLOR_TEXT_LIGHT)
+            self.cell(0, 5, f"الألوان: {colors}", align="R")
 
         # Product name
-        self.set_xy(text_x, y_start + 14)
-        self.set_font(self.default_font, "B", 12)
+        self.set_xy(text_x, y_start + 13)
+        self.set_font(self.default_font, "B", 13)
         self.set_text_color(*COLOR_PRIMARY)
-        product_name = f"{brand} {model}".strip()
-        self.multi_cell(text_w, 6, product_name, new_x="LEFT", new_y="NEXT")
+        self.multi_cell(text_w, 7, clean_name, new_x="LEFT", new_y="NEXT")
 
-        # Specs
+        # Specs header
+        spec_y = self.get_y() + 2
+        self.set_xy(text_x, spec_y)
+        self.set_font(self.default_font, "B", 9)
+        self.set_text_color(*COLOR_TEXT)
+        self.cell(0, 5, "المواصفات:", new_x="LEFT", new_y="NEXT")
+
+        # Specs lines
         if specs:
-            spec_y = self.get_y() + 1
-            self.set_xy(text_x, spec_y)
-            self.set_font(self.default_font, "", 7)
+            self.set_xy(text_x, self.get_y() + 1)
+            self.set_font(self.default_font, "", 8)
             self.set_text_color(*COLOR_TEXT)
             # Truncate specs to fit card
             spec_lines = specs.strip().split("\n")
-            truncated = "\n".join(spec_lines[:6])
-            if len(spec_lines) > 6:
+            
+            # max 8 lines of specs
+            max_lines = 7
+            truncated = "\n".join(spec_lines[:max_lines])
+            if len(spec_lines) > max_lines:
                 truncated += "\n..."
-            self.multi_cell(text_w, 3.5, truncated, new_x="LEFT", new_y="NEXT")
+                
+            self.multi_cell(text_w, 4.5, truncated, new_x="LEFT", new_y="NEXT")
 
         # Move cursor below card
-        self.set_y(y_start + card_height + 3)
+        self.set_y(y_start + card_height + 4)
 
     def _draw_no_photo(self, x, y, w, h):
         """Draw a 'No Photo' placeholder box."""
@@ -221,42 +255,52 @@ class CatalogPDF(FPDF):
 
 
 def build_catalog_pdf(
-    excel_name: str,
+    catalog_title: str,
+    subtitle: str,
     products_data: list,
     output_path: str,
 ) -> str:
     """
-    Build a PDF catalog from product data.
+    Build a PDF catalog from product data grouped by section.
 
     Each item in products_data should have:
     {
         "serial_code": str,
-        "brand": str,
-        "model_name": str,
+        "clean_name": str,
         "section_name": str,
         "specs": str,
+        "colors": str,
         "photo_path": str or None,
     }
 
     Returns the path to the generated PDF.
     """
-    pdf = CatalogPDF(excel_name=excel_name)
+    pdf = CatalogPDF(catalog_title=catalog_title)
 
     # Cover page
-    pdf.add_cover_page(product_count=len(products_data))
+    pdf.add_cover_page(product_count=len(products_data), subtitle=subtitle)
+
+    # Group products by section
+    from collections import defaultdict
+    sections = defaultdict(list)
+    for product in products_data:
+        sec = product.get("section_name", "عام")
+        sections[sec].append(product)
 
     # Start content pages
     pdf.add_page()
 
-    for product in products_data:
-        pdf.add_product_card(
-            serial=product.get("serial_code", "N/A"),
-            brand=product.get("brand", ""),
-            model=product.get("model_name", ""),
-            section=product.get("section_name", ""),
-            specs=product.get("specs", ""),
-            photo_path=product.get("photo_path") or "",
-        )
+    for sec_name, sec_products in sections.items():
+        pdf.add_section_header(sec_name)
+        
+        for product in sec_products:
+            pdf.add_product_card(
+                serial=product.get("serial_code", "N/A"),
+                clean_name=product.get("clean_name", "Unknown Product"),
+                specs=product.get("specs", ""),
+                colors=product.get("colors", ""),
+                photo_path=product.get("photo_path") or "",
+            )
 
     # Ensure output directory exists
     Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
