@@ -32,13 +32,23 @@ class CatalogPDF(FPDF):
     def __init__(self, catalog_title: str = "Product Catalog"):
         super().__init__(orientation="P", unit="mm", format="A4")
         self.catalog_title = catalog_title
+        
+        # Enable text shaping for Arabic/complex scripts (requires uharfbuzz)
+        try:
+            self.set_text_shaping(True)
+        except Exception as e:
+            logger.warning(f"Could not enable text shaping. Arabic may not render correctly: {e}")
+
         self._setup_fonts()
 
     def _setup_fonts(self):
         """Register a Unicode-capable font for Latin + Arabic text."""
         font_dir = os.path.join(ASSETS_DIR, "fonts")
-        noto_path = os.path.join(font_dir, "NotoSans-Regular.ttf")
-        noto_bold_path = os.path.join(font_dir, "NotoSans-Bold.ttf")
+        
+        # Ensure we use NotoSansArabic which actually contains the Arabic glyphs 
+        # (the plain NotoSans drops them entirely in fpdf2)
+        noto_path = os.path.join(font_dir, "NotoSansArabic-Regular.ttf")
+        noto_bold_path = os.path.join(font_dir, "NotoSansArabic-Bold.ttf")
 
         if os.path.exists(noto_path):
             self.add_font("Noto", "", fname=noto_path)
@@ -48,9 +58,15 @@ class CatalogPDF(FPDF):
                 self.add_font("Noto", "B", fname=noto_path)
             self.default_font = "Noto"
         else:
-            # Fallback to built-in Helvetica (no Arabic support)
-            logger.warning("Noto Sans font not found — PDF will not render Arabic correctly.")
-            self.default_font = "Helvetica"
+            logger.warning(f"Arabic font not found at {noto_path}. Text will drop if Arabic.")
+            
+            # Fallback to whatever is available
+            backup_noto = os.path.join(font_dir, "NotoSans-Regular.ttf")
+            if os.path.exists(backup_noto):
+                self.add_font("Noto", "", fname=backup_noto)
+                self.default_font = "Noto"
+            else:
+                self.default_font = "Helvetica"
 
     def header(self):
         """Page header with logo and line."""

@@ -5,3 +5,4 @@ Pillow>=10.0.0
 dropbox>=11.36.0
 python-dotenv>=1.0.0
 fpdf2>=2.7.0
+uharfbuzz>=0.53.0
