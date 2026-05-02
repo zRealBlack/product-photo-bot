@@ -66,6 +66,8 @@ def parse_excel(file_path: str) -> dict:
             category = str(row_values[1]).strip() if len(row_values) > 1 and row_values[1] else ""
             brand = str(row_values[2]).strip() if len(row_values) > 2 and row_values[2] else ""
             model = str(row_values[3]).strip() if len(row_values) > 3 and row_values[3] else ""
+            qty = str(row_values[4]).strip() if len(row_values) > 4 and row_values[4] else ""
+            price = str(row_values[5]).strip() if len(row_values) > 5 and row_values[5] else ""
 
             # Skip header row (contains column labels)
             if serial in ("كود الصنف", "Serial", "Code", "الكود", "التصنيف", "الصنف"):
@@ -93,6 +95,8 @@ def parse_excel(file_path: str) -> dict:
                     "category": category,
                     "brand": brand,
                     "model_name": model,
+                    "qty": qty,
+                    "price": price,
                     "section_name": current_section,
                     "sheet_name": sheet_name,
                 })
