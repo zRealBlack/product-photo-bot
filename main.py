@@ -49,6 +49,8 @@ from modules.folder_builder import build_product_folder, move_photos_to_product_
 from modules.drive_uploader import upload_output_folder
 from modules.spec_generator import generate_product_specs
 from modules.catalog_builder import build_catalog_pdf
+from modules.price_finder import find_egyptian_prices
+from modules.excel_updater import update_excel_with_prices
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
@@ -70,6 +72,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "   بيدور على صور لكل منتج، ينظمهم في فولدرات، ويرفعهم على Dropbox\n\n"
         "📄 /catalog — *كتالوج PDF*\n"
         "   بيعمل كتالوج PDF بتصميم احترافي فيه صور المنتجات والمواصفات مع لوجو ashtry.com\n\n"
+        "💰 /prices — *مقارنة أسعار المنتجات*\n"
+        "   بيدور على أسعار المنتجات في مصر (أمازون، نون، جوميا، والوكيل)، ويحسب المتوسط وأفضل سعر ويبعتلك شيت Excel معدل 📊\n\n"
         "اختار أمر وابعت الملف! 🚀",
         parse_mode="Markdown",
     )
@@ -111,6 +115,26 @@ async def catalog_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ─────────────────────────────────────────────
+# /prices command — set mode
+# ─────────────────────────────────────────────
+async def prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "prices"
+    await update.message.reply_text(
+        "💰 *وضع مقارنة الأسعار — Prices Mode*\n\n"
+        "ابعتلي ملف Excel (.xlsx) وأنا هـ:\n"
+        "🔍 أدور على أسعار المنتجات في مصر على:\n"
+        "   🛒 أمازون مصر (Amazon.eg)\n"
+        "   🛒 نون مصر (Noon.com)\n"
+        "   🛒 جوميا مصر (Jumia)\n"
+        "   🛒 موقع البراند الرسمي (مثل Samsung Egypt)\n"
+        "📊 هحسب متوسط السعر وأفضل سعر\n"
+        "📂 هعدل ملف الـ Excel وأبعتهولك تاني جاهز!\n\n"
+        "ابعت الملف دلوقتي 👇",
+        parse_mode="Markdown",
+    )
+
+
+# ─────────────────────────────────────────────
 # Handle incoming documents (Excel files)
 # ─────────────────────────────────────────────
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -132,15 +156,22 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "⚠️ *اختار mode الأول!*\n\n"
             "📸 /photos — صور المنتجات + Dropbox\n"
-            "📄 /catalog — كتالوج PDF احترافي\n\n"
+            "📄 /catalog — كتالوج PDF احترافي\n"
+            "💰 /prices — مقارنة أسعار المنتجات\n\n"
             "اختار أمر وبعدين ابعت الملف تاني.",
             parse_mode="Markdown",
         )
         return
 
+    mode_display = "📸 صور"
+    if mode == "catalog":
+        mode_display = "📄 كتالوج"
+    elif mode == "prices":
+        mode_display = "💰 أسعار"
+
     await update.message.reply_text(
         f"📥 استلمت *{filename}*!\n"
-        f"الوضع: *{'📸 صور' if mode == 'photos' else '📄 كتالوج'}*\n"
+        f"الوضع: *{mode_display}*\n"
         "هبدأ أشتغل عليه دلوقتي... ⏳",
         parse_mode="Markdown",
     )
@@ -156,6 +187,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif mode == "catalog":
         asyncio.create_task(
             catalog_pipeline(context.bot, chat_id, doc, filename)
+        )
+    elif mode == "prices":
+        asyncio.create_task(
+            prices_pipeline(context.bot, chat_id, doc, filename)
         )
 
 
@@ -455,6 +490,130 @@ async def catalog_pipeline(bot: Bot, chat_id: int, doc, filename: str):
 
 
 # ─────────────────────────────────────────────
+# Prices pipeline (Egypt Market Price Search)
+# ─────────────────────────────────────────────
+async def prices_pipeline(bot: Bot, chat_id: int, doc, filename: str):
+    temp_session = os.path.join(TEMP_DIR, uuid.uuid4().hex)
+    Path(temp_session).mkdir(parents=True, exist_ok=True)
+    excel_path = os.path.join(temp_session, filename)
+    output_filename = f"Prices_{filename}"
+    output_path = os.path.join(temp_session, output_filename)
+
+    async def send(text: str):
+        """Helper to send a message to the user."""
+        try:
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Failed to send message: {e}")
+
+    try:
+        # ── Step 1: Download the Excel ──
+        tg_file = await bot.get_file(doc.file_id)
+        await tg_file.download_to_drive(excel_path)
+        logger.info(f"Downloaded Excel to: {excel_path}")
+
+        # ── Step 2: Parse Excel ──
+        parsed = parse_excel(excel_path)
+        excel_name = parsed["excel_name"]
+        products = parsed["products"]
+
+        if not products:
+            await send("❌ مفيش منتجات في الملف. راجع الفورمات وابعته تاني.")
+            return
+
+        # Estimated seconds per product (approx 10s per price search because of web search grounding)
+        est_seconds = 10
+        est_minutes = max(1, (len(products) * est_seconds) // 60)
+        est_text = f"{est_minutes} دقيقة" if est_minutes < 60 else f"{est_minutes // 60} ساعة و {est_minutes % 60} دقيقة"
+
+        await send(
+            f"📊 لقيت *{len(products)} منتج* في *{excel_name}*\n"
+            f"⏱ الوقت المتوقع للبحث عن الأسعار: *{est_text}* تقريباً\n\n"
+            f"جاري البحث عن الأسعار في مصر... 🔍"
+        )
+
+        products_prices = {}
+        success_count = 0
+        start_time = time.time()
+        last_reported_percent = 0
+
+        # ── Step 3: Search prices for each product ──
+        for idx, product in enumerate(products, start=1):
+            serial = product["serial_code"]
+            brand = product["brand"]
+            model = product["model_name"]
+            product_display = f"{brand} {model}".strip()
+
+            logger.info(f"[Prices {idx}/{len(products)}] {serial}: {product_display}")
+
+            # Run Gemini search in thread to not block async event loop
+            price_data = await asyncio.to_thread(find_egyptian_prices, brand, model)
+            products_prices[serial] = price_data
+
+            # Check if any price was found
+            found_any = any(price_data.get(k) is not None for k in ["amazon_eg", "noon_eg", "jumia_eg", "brand_eg"])
+            if found_any:
+                success_count += 1
+                logger.info(f"✅ Prices found for {serial}")
+            else:
+                logger.warning(f"⚠️ No prices found for {serial}")
+
+            # Send progress update every 10%
+            percent_complete = int((idx / len(products)) * 100)
+            if (percent_complete % 10 == 0 and percent_complete > 0) or idx == len(products):
+                if percent_complete > last_reported_percent:
+                    last_reported_percent = percent_complete
+                    elapsed = time.time() - start_time
+                    remaining = (elapsed / idx) * (len(products) - idx)
+                    rem_min = max(1, int(remaining // 60))
+
+                    await send(
+                        f"🔄 *تقدم العمل:* {percent_complete}%\n"
+                        f"📦 بحثت عن أسعار *{idx}/{len(products)}* منتج...\n"
+                        f"⏱ الوقت المتبقي تقريباً: *{rem_min} دقيقة*"
+                    )
+
+        # ── Step 4: Write prices back to Excel ──
+        await send("📊 جاري تعديل ملف الـ Excel وإضافة الأسعار والمعادلات... ⏳")
+        await asyncio.to_thread(update_excel_with_prices, excel_path, products_prices, output_path)
+
+        # ── Step 5: Send updated Excel to user ──
+        try:
+            with open(output_path, "rb") as out_file:
+                await bot.send_document(
+                    chat_id=chat_id,
+                    document=out_file,
+                    filename=output_filename,
+                    caption=(
+                        f"💰 *تقرير مقارنة الأسعار في مصر جاهز!* 🎉\n"
+                        f"📊 تم إيجاد أسعار لـ *{success_count}* من أصل *{len(products)}* منتج.\n"
+                        f"تم إضافة أعمدة لأسعار أمازون، نون، جوميا، والوكيل مع حساب المتوسط وأقل سعر تلقائياً."
+                    ),
+                    parse_mode="Markdown",
+                )
+        except Exception as e:
+            logger.error(f"Could not send updated Excel via Telegram: {e}")
+            await send(f"❌ حصلت مشكلة أثناء إرسال ملف الـ Excel: {str(e)[:200]}")
+            return
+
+        # ── Step 6: Final stats message ──
+        elapsed_total = time.time() - start_time
+        elapsed_min = int(elapsed_total // 60)
+        elapsed_sec = int(elapsed_total % 60)
+        await send(
+            f"✅ *تمت العملية بنجاح!* 🚀\n"
+            f"⏱ الوقت المستغرق: {elapsed_min} دقيقة و {elapsed_sec} ثانية"
+        )
+
+    except Exception as e:
+        logger.exception(f"Prices pipeline error: {e}")
+        await send(f"❌ *حصلت مشكلة:* {str(e)[:300]}\n\nراجع الملف وابعته تاني.")
+
+    finally:
+        cleanup_temp_dir(temp_session)
+
+
+# ─────────────────────────────────────────────
 # Start the bot
 # ─────────────────────────────────────────────
 def main():
@@ -466,12 +625,13 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("photos", photos_command))
     app.add_handler(CommandHandler("catalog", catalog_command))
+    app.add_handler(CommandHandler("prices", prices_command))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     
     # Text fallback: any text that is not a command acts as /start
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
 
-    logger.info("🤖 Product Photo Bot is running (Photos + Catalog modes)...")
+    logger.info("🤖 Product Photo Bot is running (Photos + Catalog + Prices modes)...")
     app.run_polling(drop_pending_updates=True)
 
 
