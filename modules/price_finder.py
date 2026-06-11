@@ -1,6 +1,6 @@
 """
 price_finder.py
-Uses Google Gemini with Google Search grounding to search for product prices in Egypt.
+Uses Serper API + Google Search grounding fallbacks to search for product prices in Egypt.
 """
 
 import os
@@ -8,12 +8,14 @@ import json
 import time
 import logging
 import re
+import requests
 from google import genai
 from google.genai import types
 
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 
 # Support local brands in Egypt for exact matching
 LOCAL_BRANDS_MAP = {
@@ -49,19 +51,58 @@ def clean_product_query(brand: str, model: str) -> str:
         
     return f"{brand_clean} {cleaned_model}".strip()
 
+def search_serper(query: str) -> str:
+    """Query Google search results using Serper API targeted to Egypt."""
+    if not SERPER_API_KEY:
+        return ""
+    
+    url = "https://google.serper.dev/search"
+    headers = {
+        "X-API-KEY": SERPER_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "q": query,
+        "gl": "eg",  # Target Egypt search results!
+        "hl": "ar",  # Arabic/English language preference
+        "num": 8
+    }
+    
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=12)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        results = []
+        organic = data.get("organic", [])
+        for idx, item in enumerate(organic, start=1):
+            title = item.get("title", "")
+            link = item.get("link", "")
+            
+            snippet_parts = []
+            if item.get("snippet"):
+                snippet_parts.append(item.get("snippet"))
+            if item.get("priceRange"):
+                snippet_parts.append(f"Price Info: {item.get('priceRange')}")
+                
+            snippet_str = " | ".join(snippet_parts)
+            results.append(
+                f"Result #{idx}:\n"
+                f"Title: {title}\n"
+                f"Link: {link}\n"
+                f"Snippet: {snippet_str}\n"
+            )
+            
+        return "\n".join(results)
+    except Exception as e:
+        logger.error(f"Serper search failed for '{query}': {e}")
+        return ""
+
 def find_egyptian_prices(brand: str, model: str) -> dict:
     """
-    Search for product prices in Egypt using Gemini Search Grounding.
-    Returns a dictionary of found prices in EGP:
-    {
-        "amazon_eg": float or None,
-        "noon_eg": float or None,
-        "jumia_eg": float or None,
-        "brand_eg": float or None,
-        "general_eg": float or None,
-        "general_source": str or None,
-        "currency": "EGP"
-    }
+    Search for product prices in Egypt.
+    Uses Serper API + Gemini for free/fast lookups if SERPER_API_KEY is available.
+    Otherwise, falls back to Google Search Grounding.
     """
     fallback_result = {
         "amazon_eg": None,
@@ -78,6 +119,82 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
         return fallback_result
 
     product_name = clean_product_query(brand, model)
+    
+    # ── Option A: Serper API + Gemini (Preferred, Free Grounding & No Rate Limits) ──
+    if SERPER_API_KEY:
+        query = f"{product_name} price in Egypt EGP"
+        logger.info(f"Querying Serper for '{query}'...")
+        search_text = search_serper(query)
+        
+        if search_text:
+            prompt = (
+                f"You are a pricing analyst for the Egyptian market. We did a web search for the product '{product_name}' and got these results:\n\n"
+                f"{search_text}\n\n"
+                f"Extract the current prices in Egypt (in EGP) on:\n"
+                f"1. Amazon Egypt (amazon.eg)\n"
+                f"2. Noon Egypt (noon.com)\n"
+                f"3. Jumia Egypt (jumia.com.eg)\n"
+                f"4. Official brand website in Egypt\n"
+                f"5. General market price (e.g. B.Tech, Raya, etc.)\n\n"
+                f"Return the output STRICTLY as a JSON object with the following keys:\n"
+                f"{{\n"
+                f"  \"amazon_eg\": price as float or null,\n"
+                f"  \"noon_eg\": price as float or null,\n"
+                f"  \"jumia_eg\": price as float or null,\n"
+                f"  \"brand_eg\": price as float or null,\n"
+                f"  \"general_eg\": price as float or null,\n"
+                f"  \"general_source\": string name of the specific store/source where the general price was found or null,\n"
+                f"  \"currency\": \"EGP\"\n"
+                f"}}\n"
+                f"Return ONLY the raw JSON object. Do not include markdown code block formatting."
+            )
+            
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            models = ["gemini-3-flash-preview", "gemini-3.5-flash", "gemini-flash-latest"]
+            
+            for model_name in models:
+                try:
+                    logger.info(f"Extracting prices using model {model_name}...")
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt
+                    )
+                    text = response.text.strip()
+                    if text.startswith("```json"): text = text[7:]
+                    if text.startswith("```"): text = text[3:]
+                    if text.endswith("```"): text = text[:-3]
+                    text = text.strip()
+                    
+                    data = json.loads(text)
+                    source_val = data.get("general_source")
+                    general_source = str(source_val).strip() if source_val else None
+                    
+                    result = {
+                        "amazon_eg": data.get("amazon_eg"),
+                        "noon_eg": data.get("noon_eg"),
+                        "jumia_eg": data.get("jumia_eg"),
+                        "brand_eg": data.get("brand_eg"),
+                        "general_eg": data.get("general_eg"),
+                        "general_source": general_source,
+                        "currency": "EGP"
+                    }
+                    
+                    for key in ["amazon_eg", "noon_eg", "jumia_eg", "brand_eg", "general_eg"]:
+                        val = result[key]
+                        if val is not None:
+                            try:
+                                result[key] = float(val)
+                            except (ValueError, TypeError):
+                                result[key] = None
+                                
+                    logger.info(f"Serper + Gemini success for '{product_name}': {result}")
+                    return result
+                except Exception as e:
+                    logger.error(f"Failed extracting price with model {model_name}: {e}")
+                    continue
+            logger.warning("All extraction models failed for Serper output. Falling back to Search Grounding...")
+
+    # ── Option B: Fallback to Gemini Google Search Grounding ──
     prompt = (
         f"Find the current price of the product '{product_name}' in Egypt in EGP (Egyptian Pounds) on the following websites/sources:\n"
         f"1. Amazon Egypt (amazon.eg)\n"
@@ -99,18 +216,12 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
     )
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    # We will try gemini-3-flash-preview as the primary, and fallback to newer/older models if needed
     models = ["gemini-3-flash-preview", "gemini-3.5-flash", "gemini-flash-latest"]
-    
-    # Retry parameters for rate limits (429)
     max_retries = 2
     import random
 
     for attempt in range(max_retries):
-        # Randomized exponential backoff to prevent collision lock
         backoff = (2 ** attempt) * 5 + random.uniform(1, 3)
-        
         for model_name in models:
             try:
                 logger.info(f"Searching prices for '{product_name}' using model {model_name} (attempt {attempt + 1})...")
@@ -124,7 +235,6 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
                 )
                 
                 text = response.text.strip()
-                # Clean up any potential markdown code blocks
                 if text.startswith("```json"): text = text[7:]
                 if text.startswith("```"): text = text[3:]
                 if text.endswith("```"): text = text[:-3]
@@ -132,12 +242,9 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
 
                 try:
                     data = json.loads(text)
-                    
-                    # Extract general source name safely
                     source_val = data.get("general_source")
                     general_source = str(source_val).strip() if source_val else None
                     
-                    # Standardize keys
                     result = {
                         "amazon_eg": data.get("amazon_eg"),
                         "noon_eg": data.get("noon_eg"),
@@ -148,7 +255,6 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
                         "currency": "EGP"
                     }
                     
-                    # Convert values to float if they are numeric, otherwise None
                     for key in ["amazon_eg", "noon_eg", "jumia_eg", "brand_eg", "general_eg"]:
                         val = result[key]
                         if val is not None:
@@ -168,7 +274,7 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                     logger.warning(f"Gemini API rate limit hit (429) for '{product_name}', backoff sleeping {backoff:.2f}s...")
                     time.sleep(backoff)
-                    break # Break inner model loop to retry attempt with backoff
+                    break
                 elif "404" in err_str or "NOT_FOUND" in err_str:
                     logger.warning(f"Model {model_name} not found, trying next model...")
                     continue
@@ -180,4 +286,3 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
             
     logger.warning(f"All price search attempts failed for '{product_name}'. Returning fallback.")
     return fallback_result
-
