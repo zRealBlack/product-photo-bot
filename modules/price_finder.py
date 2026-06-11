@@ -104,7 +104,7 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
     models = ["gemini-3-flash-preview", "gemini-3.5-flash", "gemini-flash-latest"]
     
     # Retry parameters for rate limits (429)
-    max_retries = 4
+    max_retries = 2
     import random
 
     for attempt in range(max_retries):
