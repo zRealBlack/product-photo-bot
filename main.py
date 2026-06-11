@@ -558,7 +558,7 @@ async def prices_pipeline(bot: Bot, chat_id: int, doc, filename: str):
             products_prices[serial] = price_data
 
             # Check if any price was found
-            found_any = any(price_data.get(k) is not None for k in ["amazon_eg", "noon_eg", "jumia_eg", "brand_eg"])
+            found_any = any(price_data.get(k) is not None for k in ["amazon_eg", "noon_eg", "jumia_eg", "brand_eg", "general_eg"])
             if found_any:
                 success_count += 1
                 logger.info(f"✅ Prices found for {serial}")
