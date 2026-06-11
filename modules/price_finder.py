@@ -12,7 +12,25 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
+import re
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+def clean_product_query(brand: str, model: str) -> str:
+    brand_lower = brand.lower().strip()
+    model_lower = model.lower().strip()
+    
+    # Strip dots/dashes/spaces from the left of the model
+    cleaned_model = model.strip().lstrip(".-_ ")
+    
+    # If the model already starts with the brand name (case-insensitive, ignoring non-alphanumeric chars)
+    clean_brand_cmp = re.sub(r'[^a-zA-Z0-9]', '', brand_lower)
+    clean_model_cmp = re.sub(r'[^a-zA-Z0-9]', '', model_lower)
+    
+    if clean_brand_cmp and clean_model_cmp.startswith(clean_brand_cmp):
+        return cleaned_model
+        
+    return f"{brand} {cleaned_model}".strip()
 
 def find_egyptian_prices(brand: str, model: str) -> dict:
     """
@@ -33,6 +51,11 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
         "brand_eg": None,
         "general_eg": None,
         "general_source": None,
+        "amazon_eg_link": None,
+        "noon_eg_link": None,
+        "jumia_eg_link": None,
+        "brand_eg_link": None,
+        "general_eg_link": None,
         "currency": "EGP"
     }
 
@@ -40,7 +63,7 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
         logger.warning("GEMINI_API_KEY not set. Cannot search prices.")
         return fallback_result
 
-    product_name = f"{brand} {model}".strip()
+    product_name = clean_product_query(brand, model)
     prompt = (
         f"Find the current price of the product '{product_name}' in Egypt in EGP (Egyptian Pounds) on the following websites/sources:\n"
         f"1. Amazon Egypt (amazon.eg)\n"
@@ -97,6 +120,87 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
                     source_val = data.get("general_source")
                     general_source = str(source_val).strip() if source_val else None
                     
+                    # Parse grounding links
+                    links = {
+                        "amazon_eg": None,
+                        "noon_eg": None,
+                        "jumia_eg": None,
+                        "brand_eg": None,
+                        "general_eg": None
+                    }
+                    
+                    cand = response.candidates[0]
+                    if hasattr(cand, "grounding_metadata") and cand.grounding_metadata:
+                        gm = cand.grounding_metadata
+                        chunks = gm.grounding_chunks or []
+                        supports = gm.grounding_supports or []
+                        
+                        # 1st pass: scan chunks for direct domain matches
+                        for chunk in chunks:
+                            if chunk.web and chunk.web.uri:
+                                uri = chunk.web.uri
+                                uri_lower = uri.lower()
+                                title_lower = (chunk.web.title or "").lower()
+                                
+                                if "amazon" in uri_lower or "amazon" in title_lower:
+                                    if not links["amazon_eg"]: links["amazon_eg"] = uri
+                                elif "noon" in uri_lower or "noon" in title_lower:
+                                    if not links["noon_eg"]: links["noon_eg"] = uri
+                                elif "jumia" in uri_lower or "jumia" in title_lower:
+                                    if not links["jumia_eg"]: links["jumia_eg"] = uri
+                                elif brand.lower() in uri_lower or brand.lower() in title_lower:
+                                    if not links["brand_eg"]: links["brand_eg"] = uri
+                                    
+                        # 2nd pass: check support segments to resolve remaining links by single platform mentions
+                        for sup in supports:
+                            seg_text = sup.segment.text.lower()
+                            chunk_indices = sup.grounding_chunk_indices or []
+                            if not chunk_indices:
+                                continue
+                            
+                            chunk_idx = chunk_indices[0]
+                            if chunk_idx < len(chunks):
+                                uri = chunks[chunk_idx].web.uri
+                                if not uri:
+                                    continue
+                                
+                                # Check single platform mentions to avoid false matches
+                                platforms_in_seg = [p for p in ["amazon", "noon", "jumia"] if p in seg_text]
+                                if len(platforms_in_seg) == 1:
+                                    plat = platforms_in_seg[0]
+                                    if plat == "amazon" and not links["amazon_eg"]:
+                                        links["amazon_eg"] = uri
+                                    elif plat == "noon" and not links["noon_eg"]:
+                                        links["noon_eg"] = uri
+                                    elif plat == "jumia" and not links["jumia_eg"]:
+                                        links["jumia_eg"] = uri
+                                        
+                                if ("brand" in seg_text or "official" in seg_text) and not links["brand_eg"]:
+                                    links["brand_eg"] = uri
+                                    
+                        # 3rd pass: resolve general market price link
+                        for chunk in chunks:
+                            if chunk.web and chunk.web.uri:
+                                uri = chunk.web.uri
+                                uri_lower = uri.lower()
+                                # If general source is specified, check if it's in the link
+                                if general_source:
+                                    clean_src = re.sub(r'[^a-z0-9]', '', general_source.lower())
+                                    if clean_src and clean_src in uri_lower.replace(".", "").replace("-", ""):
+                                        links["general_eg"] = uri
+                                        break
+                        
+                        # Fallback for general link if not found yet (take any chunk not matched to main 3 platforms)
+                        if not links["general_eg"]:
+                            for chunk in chunks:
+                                if chunk.web and chunk.web.uri:
+                                    uri = chunk.web.uri
+                                    uri_lower = uri.lower()
+                                    is_major = any(dom in uri_lower for dom in ["amazon.eg", "noon.com", "jumia.com"])
+                                    if not is_major:
+                                        links["general_eg"] = uri
+                                        break
+
                     # Standardize keys
                     result = {
                         "amazon_eg": data.get("amazon_eg"),
@@ -105,6 +209,11 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
                         "brand_eg": data.get("brand_eg"),
                         "general_eg": data.get("general_eg"),
                         "general_source": general_source,
+                        "amazon_eg_link": links["amazon_eg"],
+                        "noon_eg_link": links["noon_eg"],
+                        "jumia_eg_link": links["jumia_eg"],
+                        "brand_eg_link": links["brand_eg"],
+                        "general_eg_link": links["general_eg"],
                         "currency": "EGP"
                     }
                     

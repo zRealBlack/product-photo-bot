@@ -101,25 +101,47 @@ def update_excel_with_prices(file_path: str, products_prices: dict, output_path:
             if serial_str in products_prices:
                 prices = products_prices[serial_str]
                 
-                # Write individual prices
-                ws.cell(row=r_idx, column=start_col).value = prices.get("amazon_eg")
-                ws.cell(row=r_idx, column=start_col + 1).value = prices.get("noon_eg")
-                ws.cell(row=r_idx, column=start_col + 2).value = prices.get("jumia_eg")
-                ws.cell(row=r_idx, column=start_col + 3).value = prices.get("brand_eg")
-                ws.cell(row=r_idx, column=start_col + 4).value = prices.get("general_eg")
+                # Write individual prices with hyperlinks if available
+                from openpyxl.styles import Font, Alignment
+                
+                # Define hyperlinked price font styling (blue, underline)
+                link_font = Font(name="Calibri", size=11, color="0563C1", underline="single")
+                
+                def write_price_cell(cell, price, link):
+                    if price is None:
+                        cell.value = None
+                    elif link:
+                        cell.value = f'=HYPERLINK("{link}", {price})'
+                        cell.font = link_font
+                    else:
+                        cell.value = price
+                        
+                write_price_cell(ws.cell(row=r_idx, column=start_col), prices.get("amazon_eg"), prices.get("amazon_eg_link"))
+                write_price_cell(ws.cell(row=r_idx, column=start_col + 1), prices.get("noon_eg"), prices.get("noon_eg_link"))
+                write_price_cell(ws.cell(row=r_idx, column=start_col + 2), prices.get("jumia_eg"), prices.get("jumia_eg_link"))
+                write_price_cell(ws.cell(row=r_idx, column=start_col + 3), prices.get("brand_eg"), prices.get("brand_eg_link"))
+                write_price_cell(ws.cell(row=r_idx, column=start_col + 4), prices.get("general_eg"), prices.get("general_eg_link"))
                 ws.cell(row=r_idx, column=start_col + 5).value = prices.get("general_source")
                 
-                # Write formulas for Average and Best Price (MIN)
-                # We use IF(COUNT(...) > 0, AVERAGE(...), "") to avoid #DIV/0! if no prices found
-                # Note: AVERAGE and MIN automatically ignore text fields (col_source is text so G:K works or G:L works since L is source)
-                # To be explicitly clear, range string is from Amazon (start_col) to General (start_col + 4)
-                range_str = f"{col_amazon}{r_idx}:{col_general}{r_idx}"
+                # Calculate numeric Average and Best Price (MIN) in Python to ensure they are never blank
+                valid_prices = []
+                for key in ["amazon_eg", "noon_eg", "jumia_eg", "brand_eg", "general_eg"]:
+                    val = prices.get(key)
+                    if val is not None:
+                        try:
+                            valid_prices.append(float(val))
+                        except (ValueError, TypeError):
+                            pass
                 
-                avg_formula = f'=IF(COUNT({range_str})>0, AVERAGE({range_str}), "")'
-                best_formula = f'=IF(COUNT({range_str})>0, MIN({range_str}), "")'
+                if valid_prices:
+                    avg_val = round(sum(valid_prices) / len(valid_prices), 2)
+                    best_val = min(valid_prices)
+                else:
+                    avg_val = None
+                    best_val = None
                 
-                ws.cell(row=r_idx, column=start_col + 6).value = avg_formula
-                ws.cell(row=r_idx, column=start_col + 7).value = best_formula
+                ws.cell(row=r_idx, column=start_col + 6).value = avg_val
+                ws.cell(row=r_idx, column=start_col + 7).value = best_val
                 
                 # Copy alignment/border style from column A for neat formatting
                 style_ref = ws.cell(row=r_idx, column=1)
@@ -127,7 +149,19 @@ def update_excel_with_prices(file_path: str, products_prices: dict, output_path:
                     c = ws.cell(row=r_idx, column=start_col + offset)
                     if style_ref.border:
                         c.border = style_ref.border.copy()
-                    c.alignment = openpyxl.styles.Alignment(horizontal="center")
+                        
+                    # For hyperlinked price cells, we don't overwrite the font with default reference styles
+                    # to preserve the blue underlined style
+                    is_price_col_offset = offset in [0, 1, 2, 3, 4]
+                    has_link = False
+                    if is_price_col_offset:
+                        key_name = ["amazon_eg_link", "noon_eg_link", "jumia_eg_link", "brand_eg_link", "general_eg_link"][offset]
+                        has_link = prices.get(key_name) is not None
+                        
+                    if not has_link and style_ref.font:
+                        c.font = style_ref.font.copy()
+                        
+                    c.alignment = Alignment(horizontal="center")
                     
     wb.save(output_path)
     return output_path
