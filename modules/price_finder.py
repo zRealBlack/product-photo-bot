@@ -100,8 +100,8 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # We will try gemini-3.5-flash as the primary, and fallback if needed
-    models = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    # We will try gemini-3-flash-preview as the primary, and fallback to newer/older models if needed
+    models = ["gemini-3-flash-preview", "gemini-3.5-flash", "gemini-flash-latest"]
     
     # Retry parameters for rate limits (429)
     max_retries = 4
