@@ -543,42 +543,53 @@ async def prices_pipeline(bot: Bot, chat_id: int, doc, filename: str):
         success_count = 0
         start_time = time.time()
         last_reported_percent = 0
+        completed = 0
+        progress_lock = asyncio.Lock()
+        sem = asyncio.Semaphore(2)  # Limit concurrency to 2 to avoid hitting API rate limits
 
-        # ── Step 3: Search prices for each product ──
-        for idx, product in enumerate(products, start=1):
+        async def price_search_worker(product, idx):
+            nonlocal completed, last_reported_percent, success_count
             serial = product["serial_code"]
             brand = product["brand"]
             model = product["model_name"]
             product_display = f"{brand} {model}".strip()
 
-            logger.info(f"[Prices {idx}/{len(products)}] {serial}: {product_display}")
+            async with sem:
+                logger.info(f"[Prices {idx}/{len(products)}] Starting price search for: {product_display}")
+                # Run Gemini search in thread to not block async event loop
+                price_data = await asyncio.to_thread(find_egyptian_prices, brand, model)
+                logger.info(f"[Prices {idx}/{len(products)}] Finished price search for: {product_display}")
 
-            # Run Gemini search in thread to not block async event loop
-            price_data = await asyncio.to_thread(find_egyptian_prices, brand, model)
-            products_prices[serial] = price_data
+            async with progress_lock:
+                completed += 1
+                products_prices[serial] = price_data
 
-            # Check if any price was found
-            found_any = any(price_data.get(k) is not None for k in ["amazon_eg", "noon_eg", "jumia_eg", "brand_eg", "general_eg"])
-            if found_any:
-                success_count += 1
-                logger.info(f"✅ Prices found for {serial}")
-            else:
-                logger.warning(f"⚠️ No prices found for {serial}")
+                # Check if any price was found
+                found_any = any(price_data.get(k) is not None for k in ["amazon_eg", "noon_eg", "jumia_eg", "brand_eg", "general_eg"])
+                if found_any:
+                    success_count += 1
+                    logger.info(f"✅ Prices found for {serial}")
+                else:
+                    logger.warning(f"⚠️ No prices found for {serial}")
 
-            # Send progress update every 10%
-            percent_complete = int((idx / len(products)) * 100)
-            if (percent_complete % 10 == 0 and percent_complete > 0) or idx == len(products):
-                if percent_complete > last_reported_percent:
-                    last_reported_percent = percent_complete
-                    elapsed = time.time() - start_time
-                    remaining = (elapsed / idx) * (len(products) - idx)
-                    rem_min = max(1, int(remaining // 60))
+                # Send progress update every 10%
+                percent_complete = int((completed / len(products)) * 100)
+                if (percent_complete % 10 == 0 and percent_complete > 0) or completed == len(products):
+                    if percent_complete > last_reported_percent:
+                        last_reported_percent = percent_complete
+                        elapsed = time.time() - start_time
+                        remaining = (elapsed / completed) * (len(products) - completed)
+                        rem_min = max(1, int(remaining // 60))
 
-                    await send(
-                        f"🔄 *تقدم العمل:* {percent_complete}%\n"
-                        f"📦 بحثت عن أسعار *{idx}/{len(products)}* منتج...\n"
-                        f"⏱ الوقت المتبقي تقريباً: *{rem_min} دقيقة*"
-                    )
+                        await send(
+                            f"🔄 *تقدم العمل:* {percent_complete}%\n"
+                            f"📦 بحثت عن أسعار *{completed}/{len(products)}* منتج...\n"
+                            f"⏱ الوقت المتبقي تقريباً: *{rem_min} دقيقة*"
+                        )
+
+        # ── Step 3: Search prices concurrently ──
+        tasks = [price_search_worker(p, idx) for idx, p in enumerate(products, start=1)]
+        await asyncio.gather(*tasks)
 
         # ── Step 4: Write prices back to Excel ──
         await send("📊 جاري تعديل ملف الـ Excel وإضافة الأسعار والمعادلات... ⏳")
