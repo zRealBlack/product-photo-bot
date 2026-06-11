@@ -51,6 +51,7 @@ from modules.spec_generator import generate_product_specs
 from modules.catalog_builder import build_catalog_pdf
 from modules.price_finder import find_egyptian_prices
 from modules.excel_updater import update_excel_with_prices
+from modules.image_editor import add_text_to_image
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
@@ -259,8 +260,14 @@ async def photos_pipeline(bot: Bot, chat_id: int, doc, filename: str):
             photos, ai_specs = await asyncio.gather(photos_task, specs_task)
 
             if photos:
-                move_photos_to_product_folder(photos, product_folder)
-
+                final_photo_paths = move_photos_to_product_folder(photos, product_folder)
+                
+                # Apply text overlay (price and qty) to each photo
+                qty_val = product.get("qty", "")
+                price_val = product.get("price", "")
+                if qty_val or price_val:
+                    for photo_path in final_photo_paths:
+                        add_text_to_image(photo_path, price_val, qty_val)
                 # Create the specs text file
                 specs_text = (
                     f"كود الصنف: {serial}\n"
