@@ -545,7 +545,7 @@ async def prices_pipeline(bot: Bot, chat_id: int, doc, filename: str):
         last_reported_percent = 0
         completed = 0
         progress_lock = asyncio.Lock()
-        sem = asyncio.Semaphore(2)  # Limit concurrency to 2 to avoid hitting API rate limits
+        sem = asyncio.Semaphore(1)  # Run sequentially to avoid hitting Google Search Grounding 429 rate limits
 
         async def price_search_worker(product, idx):
             nonlocal completed, last_reported_percent, success_count
@@ -559,6 +559,8 @@ async def prices_pipeline(bot: Bot, chat_id: int, doc, filename: str):
                 # Run Gemini search in thread to not block async event loop
                 price_data = await asyncio.to_thread(find_egyptian_prices, brand, model)
                 logger.info(f"[Prices {idx}/{len(products)}] Finished price search for: {product_display}")
+                # Throttling delay to respect the Google Search Grounding rate limits
+                await asyncio.sleep(4)
 
             async with progress_lock:
                 completed += 1

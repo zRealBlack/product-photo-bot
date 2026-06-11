@@ -100,14 +100,17 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # We will try gemini-3.5-flash as the primary, and fallback to gemini-flash-latest
-    models = ["gemini-3.5-flash", "gemini-flash-latest"]
+    # We will try gemini-3.5-flash as the primary, and fallback if needed
+    models = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     
     # Retry parameters for rate limits (429)
-    max_retries = 3
-    retry_delay = 5
+    max_retries = 4
+    import random
 
     for attempt in range(max_retries):
+        # Randomized exponential backoff to prevent collision lock
+        backoff = (2 ** attempt) * 5 + random.uniform(1, 3)
+        
         for model_name in models:
             try:
                 logger.info(f"Searching prices for '{product_name}' using model {model_name} (attempt {attempt + 1})...")
@@ -158,14 +161,14 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
                     return result
                 except json.JSONDecodeError as je:
                     logger.error(f"Failed to parse Gemini JSON output for '{product_name}': {je} | Raw output: {text}")
-                    # Try to extract floats using regex if JSON fails
+                    continue
                     
             except Exception as e:
                 err_str = str(e)
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    logger.warning(f"Gemini API rate limit hit (429) for '{product_name}', retrying in {retry_delay}s...")
-                    time.sleep(retry_delay)
-                    break # Break inner model loop to retry attempt with delay
+                    logger.warning(f"Gemini API rate limit hit (429) for '{product_name}', backoff sleeping {backoff:.2f}s...")
+                    time.sleep(backoff)
+                    break # Break inner model loop to retry attempt with backoff
                 elif "404" in err_str or "NOT_FOUND" in err_str:
                     logger.warning(f"Model {model_name} not found, trying next model...")
                     continue
@@ -177,3 +180,4 @@ def find_egyptian_prices(brand: str, model: str) -> dict:
             
     logger.warning(f"All price search attempts failed for '{product_name}'. Returning fallback.")
     return fallback_result
+
